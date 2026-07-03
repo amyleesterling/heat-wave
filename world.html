@@ -70,9 +70,9 @@
 
 <div id="modal">
   <div class="card">
-    <div class="kicker">Prototype · Tiny World № 1</div>
-    <h2>The Liquid Oasis</h2>
-    <p><b>Drag to spin the world.</b> The path from the office door to the rooftop pool is broken… from most angles. Find the view where the walkways <i>agree</i>, open the doors, and keep your coworkers cool as they climb through impossible geometry: <b>tap a walkway tile to plant a parasol ⛱</b> (you have two — they spin with the world), and <b>tap a climber to fan them</b>.</p>
+    <div class="kicker" id="mKicker">Tiny World № 1</div>
+    <h2 id="mName">The Liquid Oasis</h2>
+    <p id="mBlurb"></p>
     <button class="btn" id="startBtn">SPIN IT</button>
   </div>
 </div>
@@ -80,11 +80,12 @@
 <script>
 "use strict";
 /* ============================================================
-   TINY WORLD — a rotatable Escher-in-pastel prototype.
-   Orthographic block world; drag to orbit with 90° snaps.
+   TINY WORLD — rotatable Escher-in-pastel dioramas.
+   Orthographic block worlds; drag to orbit with 90° snaps.
    Walkability is computed from SCREEN adjacency after projection
-   (the Fez/Monument Valley trick), so paths connect only when
-   the perspective says they do.
+   (the Fez/Monument Valley trick). From world № 2 on, no single
+   view connects door to pool: rotate MID-WALK to open new seams
+   while the queue cooks.
    ============================================================ */
 
 const canvas = document.getElementById('c');
@@ -122,54 +123,74 @@ const sfx = {
 };
 
 /* ============================================================
-   THE WORLD — blocks on an integer grid. y is UP.
-   mats: stone (structure) · walk (path) · pool (goal) · accent
+   WORLDS — each is a builder plus tuning. All share the same
+   world centre (3.5, 2.5) so the projection math holds.
    ============================================================ */
-const B = [];
+let B = [], TOPS = [], occupiedSet = new Set(), DOOR = null, POOLS = [];
 const add = (x,y,z,m)=>B.push({x,y,z,m});
 const col = (x,z,h,m='stone')=>{ for(let y=0;y<h;y++) add(x,y,z,m); };
 
-/* -- structure, hand-laid --
-   Lower path runs along z=4 at height y=1 (tops of y=0 blocks).
-   Upper path runs along z=0 at height y=3 (tops of y=2 columns).
-   They are physically severed. From exactly one snap view the
-   projection stitches the seam.                                 */
-// office tower (door block at west end of lower path)
-col(0,4,3,'office'); col(0,3,3,'office'); col(0,5,2,'office');
-// lower walkway z=4, tops at y=1
-for(let x=1;x<=4;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
-// upper colonnade z=0, tops at y=3
-for(let x=2;x<=5;x++){ col(x,0,3,'stone'); add(x,3,0,'walk'); }
-// L-turn of the upper deck toward the seam — from view 1 (east face),
-// its far tile projects exactly one step from the lower deck's end.
-col(5,1,3,'stone'); add(5,3,1,'walk');
-col(5,2,3,'stone'); add(5,3,2,'walk');
-// pool terrace at east end of upper path
-col(6,0,3,'stone'); col(6,1,3,'stone');
-add(6,3,0,'pool'); add(6,3,1,'pool');
-col(7,0,3,'stone'); col(7,1,3,'stone');
-add(7,3,0,'pool'); add(7,3,1,'pool');
-// decorative gardens tucked into the structure
-col(6,4,1,'accent'); add(6,1,4,'garden');
-col(2,2,2,'accent'); add(2,2,2,'garden');
-col(7,2,3,'accent'); add(7,3,2,'garden');
-
-const DOOR = {x:1, y:1, z:4};          // spawn tile (walk top coords)
-const POOLS = [{x:6,y:3,z:0},{x:6,y:3,z:1},{x:7,y:3,z:0},{x:7,y:3,z:1}];
-
-/* Walkable tops: mat walk/pool and nothing above */
-const occupied = new Set(B.map(b=>`${b.x},${b.y},${b.z}`));
-const TOPS = B.filter(b => (b.m==='walk'||b.m==='pool') && !occupied.has(`${b.x},${b.y+1},${b.z}`));
+const WORLDS = [
+  { name:'The Liquid Oasis', gated:true, count:5, quota:3, heat:13, parasols:2,
+    blurb:'<b>Drag to spin the world.</b> The path from the office door to the rooftop pool is broken… from most angles. Find the view where the walkways <i>agree</i>, then open the doors. <b>Tap a tile to plant a parasol ⛱ · tap a climber to fan 🌬.</b>',
+    build(){
+      col(0,4,3,'office'); col(0,3,3,'office'); col(0,5,2,'office');
+      for(let x=1;x<=4;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
+      for(let x=2;x<=5;x++){ col(x,0,3,'stone'); add(x,3,0,'walk'); }
+      col(5,1,3,'stone'); add(5,3,1,'walk');
+      col(5,2,3,'stone'); add(5,3,2,'walk');
+      col(6,0,3,'stone'); col(6,1,3,'stone');
+      add(6,3,0,'pool'); add(6,3,1,'pool');
+      col(7,0,3,'stone'); col(7,1,3,'stone');
+      add(7,3,0,'pool'); add(7,3,1,'pool');
+      col(6,4,1,'accent'); add(6,1,4,'garden');
+      col(2,2,2,'accent'); add(2,2,2,'garden');
+      col(7,2,3,'accent'); add(7,3,2,'garden');
+      return { door:{x:1,y:1,z:4}, pools:[{x:6,y:3,z:0},{x:6,y:3,z:1},{x:7,y:3,z:0},{x:7,y:3,z:1}] };
+    } },
+  { name:'The Rooftop Was Upstairs', gated:false, count:5, quota:3, heat:4.5, parasols:2,
+    blurb:'No single view connects the door to the pool. <b>Open the doors anyway</b> — walk them across the first seam, then <b>spin the world while they wait</b> to open the next. They keep cooking while you turn. The pool, it turns out, was on the office roof all along.',
+    build(){
+      // office tower — the pool deck will sit on its roof
+      col(0,3,3,'office'); col(0,4,3,'office'); col(0,5,3,'office');
+      // door deck A: z=4, tops at surf 2
+      for(let x=1;x<=3;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
+      // floating middle deck B: (2..4, 3, 2) on one slim column
+      col(3,2,3,'stone');
+      for(let x=2;x<=4;x++) add(x,3,2,'walk');
+      // pool deck C on the office roof: (0, 3, 3..5)
+      add(0,3,3,'walk'); add(0,3,4,'pool'); add(0,3,5,'pool');
+      // dressing
+      col(6,1,2,'accent'); add(6,2,1,'garden');
+      col(7,4,1,'accent'); add(7,1,4,'garden');
+      return { door:{x:1,y:1,z:4}, pools:[{x:0,y:3,z:4},{x:0,y:3,z:5}] };
+    } },
+  { name:'The Long Way Around', gated:false, count:6, quota:4, heat:5.5, parasols:1,
+    blurb:'Two seams, two different faces of the world, one parasol, and a hotter sun. Stage the crowd on the floating deck, spin, and pray. HR calls this <i>a growth opportunity</i>.',
+    build(){
+      col(0,3,3,'office'); col(0,4,3,'office'); col(0,5,2,'office');
+      // door deck A: z=4
+      for(let x=1;x<=3;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
+      // floating deck B: (1..3, 3, 5) — behind and above the door deck
+      col(2,5,3,'stone');
+      for(let x=1;x<=3;x++) add(x,3,5,'walk');
+      // pool deck C: (5..7, 3, 5)
+      col(6,5,3,'stone');
+      add(5,3,5,'walk'); add(6,3,5,'pool'); add(7,3,5,'pool');
+      // dressing
+      col(5,1,2,'accent'); add(5,2,1,'garden');
+      col(7,0,1,'accent'); add(7,1,0,'garden');
+      return { door:{x:1,y:1,z:4}, pools:[{x:6,y:3,z:5},{x:7,y:3,z:5}] };
+    } },
+];
+let wi = 0;
 
 /* ---------- projection ---------- */
-const TILE = 34, HGT = 34*0.5;  // screen tile radius / block height step
-let yaw = 0;                    // current continuous yaw
-let yawTarget = 0, dragging=false, spun=false;
+const TILE = 34, HGT = 34*0.5;
+let yaw = 0, yawTarget = 0, dragging=false, spun=false;
 
 function project(x,y,z,cy=yaw){
-  // rotate around vertical axis about world centre
-  const cx0 = 3.5, cz0 = 2.5;
-  const dx = x-cx0, dz = z-cz0;
+  const dx = x-3.5, dz = z-2.5;
   const rx = dx*Math.cos(cy) - dz*Math.sin(cy);
   const rz = dx*Math.sin(cy) + dz*Math.cos(cy);
   return {
@@ -178,26 +199,25 @@ function project(x,y,z,cy=yaw){
     depth: rx + rz + y*0.001,
   };
 }
-const SNAPS = [0,1,2,3].map(k=>k*Math.PI/2); // four faces of the world
+const SNAPS = [0,1,2,3].map(k=>k*Math.PI/2);
 const snapIndex = a => {
   let best=0, bd=1e9;
   for(let i=0;i<4;i++){ const d=Math.abs(Math.atan2(Math.sin(a-SNAPS[i]),Math.cos(a-SNAPS[i]))); if(d<bd){bd=d;best=i;} }
   return best;
 };
+const settled = () => !dragging && Math.abs(yaw - yawTarget) < 0.03;
 
-/* ---------- screen-space walk graph (the Escher rule) ----------
-   At a snapped view, quantize each top tile to integer (u,v).
-   Front-most tile wins each screen cell. Tiles connect if their
-   (u,v) differ by exactly one walk-step: (±1,±1).                */
+/* ---------- screen-space walk graph (the Escher rule) ---------- */
+const keyOf = t => `${t.x},${t.y},${t.z}`;
 function graphAt(idx){
   const a = SNAPS[idx];
   const cells = new Map();
   for(const t of TOPS){
-    const p = project(t.x, t.y+1, t.z, a); // top surface
+    const p = project(t.x, t.y+1, t.z, a);
     const u = Math.round(p.sx / TILE), v = Math.round(p.sy / (TILE*0.5));
-    const key = u+','+v;
-    const prev = cells.get(key);
-    if(!prev || p.depth > prev.depth) cells.set(key, {t, u, v, depth:p.depth});
+    const k = u+','+v;
+    const prev = cells.get(k);
+    if(!prev || p.depth > prev.depth) cells.set(k, {t, u, v, depth:p.depth});
   }
   const nodes = [...cells.values()];
   const byUV = new Map(nodes.map(n=>[n.u+','+n.v, n]));
@@ -210,13 +230,30 @@ function graphAt(idx){
   }
   return { edges, visible:new Set(nodes.map(n=>keyOf(n.t))) };
 }
-const keyOf = t => `${t.x},${t.y},${t.z}`;
-
-function findPath(idx){
-  const g = graphAt(idx);
-  if(!g.visible.has(keyOf(DOOR))) return null;
+let G = null;        // graph at the current snapped view
+let POT = new Map(); // per-tile hop distance to a pool over the UNION of all
+                     // four views' graphs — "how far from winning, counting
+                     // future rotations". Escher-safe, unlike world distance.
+function buildPotential(){
+  const union = new Map(TOPS.map(t=>[keyOf(t), new Set()]));
+  for(let v=0; v<4; v++){
+    const g = graphAt(v);
+    for(const [k, es] of g.edges) for(const nb of es) union.get(k).add(keyOf(nb));
+  }
+  POT = new Map();
+  const q = [];
+  for(const p of POOLS){ POT.set(keyOf(p), 0); q.push(keyOf(p)); }
+  while(q.length){
+    const k = q.shift(), d = POT.get(k);
+    for(const [k2, es] of union)
+      if(!POT.has(k2) && es.has(k)){ POT.set(k2, d+1); q.push(k2); }
+  }
+}
+function routeFrom(tile, allowFrontier=false){
+  if(!G || !G.visible.has(keyOf(tile))) return null;
   const goal = new Set(POOLS.map(keyOf));
-  const q=[DOOR], prev=new Map([[keyOf(DOOR),null]]);
+  const q=[tile], prev=new Map([[keyOf(tile),null]]);
+  const order=[tile];
   while(q.length){
     const cur=q.shift();
     if(goal.has(keyOf(cur))){
@@ -224,44 +261,107 @@ function findPath(idx){
       while(k){ path.unshift(k); k=prev.get(keyOf(k)); }
       return path;
     }
-    for(const nb of (g.edges.get(keyOf(cur))||[])){
+    for(const nb of (G.edges.get(keyOf(cur))||[])){
       if(prev.has(keyOf(nb))) continue;
-      prev.set(keyOf(nb), cur); q.push(nb);
+      prev.set(keyOf(nb), cur); q.push(nb); order.push(nb);
     }
   }
-  return null;
+  if(!allowFrontier) return null;
+  // no full route in this view — advance to the reachable tile with the best
+  // potential, staging the crowd at the broken seam for the next rotation
+  const pot = t => POT.has(keyOf(t)) ? POT.get(keyOf(t)) : Infinity;
+  let best=null, bd=pot(tile) - 0.5; // only move if strictly better
+  for(const t of order){
+    const d = pot(t);
+    if(d < bd){ bd=d; best=t; }
+  }
+  if(!best) return null;
+  const path=[best]; let k=prev.get(keyOf(best));
+  while(k){ path.unshift(k); k=prev.get(keyOf(k)); }
+  return path.length>1 ? path : null;
 }
 
 /* ---------- state ---------- */
 const $ = s=>document.querySelector(s);
 const el = { saved:$('#saved'), paras:$('#paras'), melted:$('#melted'), quota:$('#quota'), status:$('#status'),
-             goBtn:$('#goBtn'), modal:$('#modal'), startBtn:$('#startBtn') };
+             goBtn:$('#goBtn'), modal:$('#modal'), startBtn:$('#startBtn'),
+             mKicker:$('#mKicker'), mName:$('#mName'), mBlurb:$('#mBlurb') };
 let mode='spin';            // spin | walk | done
-let walkers=[], savedCount=0, meltedCount=0, spawnT=0, spawnedN=0, particles=[];
-let parasols=[]; const PARASOL_MAX=2;
-const QUOTA=3, COUNT=5, HEAT_RATE=13; // unfanned slowpokes will melt a step from the water
-let currentPath=null;
+let walkers=[], savedCount=0, meltedCount=0, spawnT=0, spawnedN=0, particles=[], parasols=[];
+let W = WORLDS[0];
+
+function loadWorld(i){
+  wi = clamp(i, 0, WORLDS.length-1);
+  W = WORLDS[wi];
+  B = [];
+  const r = W.build.call(null);
+  DOOR = r.door; POOLS = r.pools;
+  occupiedSet = new Set(B.map(keyOf));
+  TOPS = B.filter(b => (b.m==='walk'||b.m==='pool') && !occupiedSet.has(`${b.x},${b.y+1},${b.z}`));
+  buildPotential();
+  walkers=[]; parasols=[]; particles=[];
+  savedCount=0; meltedCount=0; spawnT=0; spawnedN=0;
+  mode='spin'; yaw=0; yawTarget=0; spun=false; G=null;
+  el.saved.textContent=0; el.melted.textContent=0;
+  el.quota.textContent=W.quota; el.paras.textContent=W.parasols;
+  el.mKicker.textContent = `Tiny World № ${wi+1} of ${WORLDS.length}`;
+  el.mName.textContent = W.name;
+  el.mBlurb.innerHTML = W.blurb;
+  el.modal.classList.remove('hidden');
+  el.goBtn.classList.remove('hidden');
+  el.goBtn.onclick = openDoors;
+  localStorage.setItem('btw_world', String(wi));
+  refreshGate();
+}
 
 function setStatus(msg){ el.status.textContent = msg; }
 function refreshGate(){
   if(mode!=='spin') return;
-  const idx = snapIndex(yawTarget);
-  currentPath = findPath(idx);
-  el.goBtn.disabled = !currentPath;
-  el.goBtn.textContent = currentPath ? '🚪 OPEN THE DOORS' : '🧩 FIND THE WAY';
-  if(currentPath){ setStatus('the walkways agree ✨'); }
-  else setStatus(spun ? 'not from this angle…' : 'spin the world 🌍');
+  G = graphAt(snapIndex(yawTarget));
+  const full = routeFrom(DOOR);
+  if(W.gated){
+    el.goBtn.disabled = !full;
+    el.goBtn.textContent = full ? '🚪 OPEN THE DOORS' : '🧩 FIND THE WAY';
+    setStatus(full ? 'the walkways agree ✨' : (spun ? 'not from this angle…' : 'spin the world 🌍'));
+  } else {
+    el.goBtn.disabled = false;
+    el.goBtn.textContent = '🚪 OPEN THE DOORS';
+    setStatus(full ? 'the walkways agree ✨' : 'no through-path… you’ll rotate mid-walk 🌀');
+  }
+}
+function openDoors(){
+  if(mode!=='spin' || el.goBtn.disabled) return;
+  mode='walk';
+  el.goBtn.classList.add('hidden');
+  G = graphAt(snapIndex(yawTarget));
+  setStatus(W.gated ? 'tap tiles to plant ⛱ · tap climbers to fan 🌬'
+                    : 'walk them to the seam, then SPIN 🌀 (they keep cooking)');
+  sfx.connect();
+}
+function finishWorld(){
+  mode='done';
+  const win = savedCount >= W.quota;
+  if(win){
+    sfx.win();
+    const last = wi === WORLDS.length-1;
+    setStatus(last ? `☀️ ${savedCount}/${W.count} — all ${WORLDS.length} tiny worlds conquered!`
+                   : `☀️ ${savedCount}/${W.count} reached the water!`);
+    el.goBtn.textContent = last ? '↻ FROM THE TOP' : '🌍 NEXT WORLD';
+    el.goBtn.disabled = false;
+    el.goBtn.classList.remove('hidden');
+    el.goBtn.onclick = ()=>loadWorld(last ? 0 : wi+1);
+  } else {
+    setStatus('🫠 the oasis remains theoretical…');
+    el.goBtn.textContent = '↻ SPIN AGAIN';
+    el.goBtn.disabled = false;
+    el.goBtn.classList.remove('hidden');
+    el.goBtn.onclick = ()=>loadWorld(wi);
+  }
 }
 
 el.startBtn.addEventListener('click', ()=>{ el.modal.classList.add('hidden'); tone(500,.1,'triangle',.12); });
-el.goBtn.addEventListener('click', ()=>{
-  if(!currentPath || mode!=='spin') return;
-  mode='walk'; el.goBtn.classList.add('hidden');
-  setStatus('tap tiles to plant ⛱ · tap climbers to fan 🌬');
-  sfx.connect();
-});
 
-/* ---------- input: drag to orbit, tap to fan ---------- */
+/* ---------- input: drag to orbit, tap to fan / plant ---------- */
 let px0=0, py0=0, yaw0=0, moved=0;
 canvas.addEventListener('pointerdown', e=>{
   dragging=true; moved=0; px0=e.clientX; py0=e.clientY; yaw0=yaw;
@@ -280,7 +380,8 @@ addEventListener('pointerup', e=>{
   const idx = snapIndex(yaw);
   yawTarget = SNAPS[idx] + Math.round((yaw - SNAPS[idx])/TAU)*TAU;
   sfx.snap();
-  refreshGate();
+  if(mode==='spin') refreshGate();
+  else if(mode==='walk'){ G = graphAt(idx); }
 });
 
 function tapAt(cx, cy){
@@ -292,7 +393,6 @@ function tapAt(cx, cy){
 function fanAt(wx, wy){
   let best=null, bd=42*42;
   for(const w of walkers){
-    if(w.state!=='walk') continue;
     const p = walkerScreen(w);
     const d2 = (p.sx-wx)**2 + (p.sy-18-wy)**2;
     if(d2<bd){ bd=d2; best=w; }
@@ -310,7 +410,7 @@ function fanAt(wx, wy){
   return false;
 }
 function plantParasol(wx, wy){
-  if(parasols.length >= PARASOL_MAX) return;
+  if(parasols.length >= W.parasols) return;
   let bt=null, bd=26*26;
   for(const t of TOPS){
     if(t.m!=='walk') continue;
@@ -321,72 +421,82 @@ function plantParasol(wx, wy){
   }
   if(!bt) return;
   parasols.push({ t: bt });
-  el.paras.textContent = PARASOL_MAX - parasols.length;
+  el.paras.textContent = W.parasols - parasols.length;
   tone(340,.09,'triangle',.18); tone(520,.12,'triangle',.12,null,.06);
 }
 
-/* ---------- walkers ---------- */
+/* ---------- walkers: tile-based, re-routed on every snap ---------- */
 const SKIN=['#F6C9A0','#E8B48A','#C68B59','#8D5A3A'], SHIRT=['#8FB8DE','#A7D8C9','#E7C6E0','#F0E2B6','#B8C4E8'];
 function spawnWalker(){
-  walkers.push({ i:0, t:0, state:'walk', heat:0, fanCd:0,
-    speed:rand(.75,1.0), phase:rand(0,TAU),
+  walkers.push({ tile: DOOR, next:null, t:0, heat:0, fanCd:0, waiting:false,
+    speed:rand(.8,1.05), phase:rand(0,TAU), jig:rand(-6,6),
     skin:SKIN[Math.floor(Math.random()*SKIN.length)],
     shirt:SHIRT[Math.floor(Math.random()*SHIRT.length)],
     tieHue:rand(0,360) });
   spawnedN++;
 }
 function walkerScreen(w){
-  const path = currentPath;
-  const a = path[Math.min(w.i, path.length-1)];
-  const b = path[Math.min(w.i+1, path.length-1)];
-  const pa = project(a.x+0, a.y+1, a.z, yaw), pb = project(b.x, b.y+1, b.z, yaw);
-  return { sx:lerp(pa.sx,pb.sx,w.t), sy:lerp(pa.sy,pb.sy,w.t), depth:lerp(pa.depth,pb.depth,w.t) };
+  const a = project(w.tile.x, w.tile.y+1, w.tile.z);
+  if(!w.next) return { sx:a.sx + (w.waiting? w.jig : 0), sy:a.sy, depth:a.depth };
+  const b = project(w.next.x, w.next.y+1, w.next.z);
+  return { sx:lerp(a.sx,b.sx,w.t), sy:lerp(a.sy,b.sy,w.t), depth:lerp(a.depth,b.depth,w.t) };
 }
 
 function update(dt){
-  if(mode!=='walk'){
-    // idle: ease yaw to target
-    if(!dragging) yaw += (yawTarget-yaw)*Math.min(1,dt*8);
-    updateParticles(dt);
-    return;
-  }
   if(!dragging) yaw += (yawTarget-yaw)*Math.min(1,dt*8);
-  if(spawnedN < COUNT){ spawnT -= dt; if(spawnT<=0){ spawnWalker(); spawnT = 1.6; } }
+  updateParticles(dt);
+  if(mode!=='walk') return;
+
+  if(spawnedN < W.count){ spawnT -= dt; if(spawnT<=0){ spawnWalker(); spawnT = 1.6; } }
+
+  const canMove = settled();
   for(let i=walkers.length-1;i>=0;i--){
     const w = walkers[i];
-    w.fanCd -= dt; w.phase += dt*9;
-    if(w.state!=='walk') continue;
-    w.t += dt * w.speed * 1.1; // ~1 tile per second
-    if(w.t>=1){ w.t=0; w.i++; }
+    w.fanCd -= dt; w.phase += dt*(w.waiting?2.5:9);
+
+    // heat never stops — waiting at a seam is exactly as sweaty as it sounds
     const ws = walkerScreen(w);
     const shaded = parasols.some(pp=>{
       const q = project(pp.t.x, pp.t.y+1, pp.t.z);
       return (q.sx-ws.sx)**2 + (q.sy-ws.sy)**2 < (TILE*1.15)**2;
     });
-    w.heat += HEAT_RATE * (shaded ? 0.2 : 1) * dt;
-    if(w.i >= currentPath.length-1 && w.t===0){
-      w.state='saved'; savedCount++; el.saved.textContent=savedCount;
-      sfx.save();
-      const p = walkerScreen(w);
-      for(let k=0;k<14;k++){ const a=rand(-Math.PI,0);
-        particles.push({sx:p.sx, sy:p.sy, vx:Math.cos(a)*rand(30,80), vy:Math.sin(a)*rand(40,100), life:rand(.4,.8), max:.8, color:'#BFE9F7', size:rand(2,3.5)});
-      }
+    w.heat += W.heat * (shaded ? 0.2 : 1) * dt;
+    if(w.heat>=100){
+      meltedCount++; el.melted.textContent=meltedCount;
+      sfx.melt();
       walkers.splice(i,1);
       continue;
     }
-    if(w.heat>=100){
-      w.state='melted'; meltedCount++; el.melted.textContent=meltedCount;
-      sfx.melt();
-      walkers.splice(i,1);
+
+    if(w.next){
+      if(canMove || w.t>0){ // finish a step even if the world turned mid-stride
+        w.t += dt * w.speed * 1.1;
+        if(w.t>=1){
+          w.tile = w.next; w.next = null; w.t = 0;
+          if(POOLS.some(p=>keyOf(p)===keyOf(w.tile))){
+            savedCount++; el.saved.textContent=savedCount;
+            sfx.save();
+            const p = walkerScreen(w);
+            for(let k=0;k<14;k++){ const a=rand(-Math.PI,0);
+              particles.push({sx:p.sx, sy:p.sy, vx:Math.cos(a)*rand(30,80), vy:Math.sin(a)*rand(40,100), life:rand(.4,.8), max:.8, color:'#BFE9F7', size:rand(2,3.5)});
+            }
+            walkers.splice(i,1);
+            continue;
+          }
+        }
+      }
+    } else if(canMove){
+      const route = routeFrom(w.tile, true);
+      if(route && route.length>1){
+        // don't pile onto a tile someone is already walking toward
+        const takken = walkers.some(o=>o!==w && ((o.next && keyOf(o.next)===keyOf(route[1])) || (!o.next && keyOf(o.tile)===keyOf(route[1]))));
+        if(!takken){ w.next = route[1]; w.t = 0; w.waiting = false; }
+        else w.waiting = true;
+      } else w.waiting = true;
     }
   }
-  updateParticles(dt);
-  if(spawnedN>=COUNT && walkers.length===0 && mode==='walk'){
-    mode='done';
-    const win = savedCount>=QUOTA;
-    setStatus(win ? `☀️ ${savedCount}/${COUNT} reached the oasis — prototype complete!` : '🫠 the oasis remains theoretical. drag to admire, refresh to retry');
-    if(win) sfx.win();
-  }
+
+  if(spawnedN>=W.count && walkers.length===0 && mode==='walk') finishWorld();
 }
 function updateParticles(dt){
   for(let i=particles.length-1;i>=0;i--){
@@ -409,10 +519,7 @@ const MATS = {
 };
 
 function drawBlock(b, bobY){
-  const p  = project(b.x, b.y, b.z);
-  const pT = project(b.x, b.y+1, b.z);
   const cx = CW/2, cy = CH*0.46 + bobY;
-  const x = cx + p.sx, y = cy + p.sy, xT = cx + pT.sx, yT = cy + pT.sy;
   const m = MATS[b.m] || MATS.stone;
   const corner = (ox,oz,y_)=>{ const q = project(b.x+ox, y_, b.z+oz); return [cx+q.sx, cy+q.sy]; };
   const t1=corner(0,0,b.y+1), t2=corner(1,0,b.y+1), t3=corner(1,1,b.y+1), t4=corner(0,1,b.y+1);
@@ -420,29 +527,24 @@ function drawBlock(b, bobY){
   const poly = (pts,fill)=>{ ctx.fillStyle=fill; ctx.strokeStyle=fill; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(...pts[0]); for(let i=1;i<pts.length;i++) ctx.lineTo(...pts[i]);
     ctx.closePath(); ctx.fill(); ctx.stroke(); };
-  // side faces: rotate each outward normal; a face is visible when it
-  // points toward the camera diagonal (+rx+rz), and it's the "right"
-  // (darker) face when its screen direction is rightward.
   const faces = [
-    { pts:[t2,t3,b3,b2], n:[ 1, 0] },  // +x
-    { pts:[t3,t4,b4,b3], n:[ 0, 1] },  // +z
-    { pts:[t1,t2,b2,b1], n:[ 0,-1] },  // -z
-    { pts:[t4,t1,b1,b4], n:[-1, 0] },  // -x
+    { pts:[t2,t3,b3,b2], n:[ 1, 0] },
+    { pts:[t3,t4,b4,b3], n:[ 0, 1] },
+    { pts:[t1,t2,b2,b1], n:[ 0,-1] },
+    { pts:[t4,t1,b1,b4], n:[-1, 0] },
   ];
   const cs = Math.cos(yaw), sn = Math.sin(yaw);
   for(const f of faces){
     const rxn = f.n[0]*cs - f.n[1]*sn, rzn = f.n[0]*sn + f.n[1]*cs;
-    if(rxn + rzn <= 0.02) continue;           // back-facing
+    if(rxn + rzn <= 0.02) continue;
     poly(f.pts, (rxn - rzn) > 0 ? m.right : m.left);
   }
-  // top
   poly([t1,t2,t3,t4], m.top);
   if(b.m==='pool'){
-    // shimmer
     ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=1.6;
     const mx=(t1[0]+t3[0])/2, my=(t1[1]+t3[1])/2, ph=(performance.now()/900 + b.x + b.z)%1;
     ctx.globalAlpha = .3+.4*Math.sin(ph*Math.PI);
-    ctx.beginPath(); ctx.moveTo(mx-10, my+ (ph-0.5)*8); ctx.quadraticCurveTo(mx, my+2+(ph-.5)*8, mx+10, my+(ph-.5)*8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(mx-10, my+(ph-.5)*8); ctx.quadraticCurveTo(mx, my+2+(ph-.5)*8, mx+10, my+(ph-.5)*8); ctx.stroke();
     ctx.globalAlpha = 1;
   }
   if(b.m==='garden'){
@@ -452,9 +554,7 @@ function drawBlock(b, bobY){
       ctx.beginPath(); ctx.arc(mx+fx, my+fy, 2.4, 0, TAU); ctx.fill();
     }
   }
-  // door decal on the office block adjacent to spawn
-  if(b.m==='office' && b.x===0 && b.y===0 && b.z===4){
-    // door on +x face midpoint
+  if(b.m==='office' && b.y===0 && DOOR && b.z===DOOR.z && Math.abs(b.x-DOOR.x)===1){
     const dm = [(t2[0]+b3[0]+t3[0]+b2[0])/4, (t2[1]+b3[1]+t3[1]+b2[1])/4];
     ctx.fillStyle='#7E4638';
     ctx.beginPath(); ctx.ellipse(dm[0], dm[1]+3, 6.5, 9, 0, 0, TAU); ctx.fill();
@@ -468,13 +568,11 @@ function drawWalker(w, bobY){
   ctx.save(); ctx.translate(cx, cy);
   ctx.fillStyle='rgba(90,50,70,.3)';
   ctx.beginPath(); ctx.ellipse(0, 2, 8, 3, 0, 0, TAU); ctx.fill();
-  // legs
   const lp=Math.sin(w.phase);
   ctx.strokeStyle='#5A5F73'; ctx.lineWidth=3.4; ctx.lineCap='round';
   ctx.beginPath(); ctx.moveTo(-2,-10+bob*.3); ctx.lineTo(-2+lp*3.4, 0); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(2,-10+bob*.3); ctx.lineTo(2-lp*3.4, 0); ctx.stroke();
-  // body
-  const mixC=(h1,t)=>{ // toward red with heat
+  const mixC=(h1,t)=>{
     const p1=parseInt(h1.slice(1),16), r=(p1>>16)&255,g=(p1>>8)&255,bl=p1&255;
     return `rgb(${Math.round(lerp(r,255,t*.6))},${Math.round(lerp(g,90,t*.6))},${Math.round(lerp(bl,70,t*.6))})`;
   };
@@ -482,16 +580,25 @@ function drawWalker(w, bobY){
   ctx.beginPath(); ctx.roundRect(-6,-22+bob,12,14,4); ctx.fill();
   ctx.fillStyle=`hsl(${w.tieHue} 60% 52%)`;
   ctx.beginPath(); ctx.moveTo(0,-21+bob); ctx.lineTo(1.8,-17+bob); ctx.lineTo(0,-11+bob); ctx.lineTo(-1.8,-17+bob); ctx.closePath(); ctx.fill();
-  // head
   ctx.fillStyle=w.skin;
   ctx.beginPath(); ctx.arc(0,-27+bob,5.4,0,TAU); ctx.fill();
   ctx.fillStyle='#3B2B27';
   ctx.beginPath(); ctx.arc(0,-29+bob,4.6,Math.PI*1.05,Math.PI*1.95); ctx.fill();
-  // heat bar
+  if(w.waiting){ // impatient "…" while stranded at a broken seam
+    ctx.fillStyle='rgba(255,246,232,.92)';
+    ctx.beginPath(); ctx.roundRect(-10,-44+bob,20,11,5.5); ctx.fill();
+    ctx.fillStyle='#5A3A4A';
+    const on = Math.floor(performance.now()/400)%3;
+    for(let i=0;i<3;i++){
+      ctx.globalAlpha = on>=i ? 1 : .25;
+      ctx.beginPath(); ctx.arc(-4.5+i*4.5, -38.5+bob, 1.5, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
   if(w.heat>15){
-    ctx.fillStyle='rgba(58,32,48,.4)'; ctx.fillRect(-9,-38+bob,18,4);
+    ctx.fillStyle='rgba(58,32,48,.4)'; ctx.fillRect(-9,-52+bob,18,4);
     ctx.fillStyle = heat<0.5?'#FFD66B':heat<0.8?'#FF9A5C':'#F0503C';
-    ctx.fillRect(-9,-38+bob,18*heat,4);
+    ctx.fillRect(-9,-52+bob,18*heat,4);
   }
   ctx.restore();
 }
@@ -503,23 +610,19 @@ function frame(now){
   const t=now/1000;
 
   ctx.setTransform(dpr,0,0,dpr,0,0);
-  // pastel void
   const g=ctx.createLinearGradient(0,0,0,CH);
   g.addColorStop(0,'#FFD9B8'); g.addColorStop(.45,'#F0A8A8'); g.addColorStop(1,'#C9A7E8');
   ctx.fillStyle=g; ctx.fillRect(0,0,CW,CH);
-  // drifting motes
   ctx.fillStyle='rgba(255,255,255,.35)';
   for(let i=0;i<14;i++){
-    const mx=((i*167)% (CW+40)) -20 + Math.sin(t*.3+i)*10;
-    const my=((i*247 + t*9)% (CH+40)) -20;
+    const mx=((i*167)%(CW+40))-20 + Math.sin(t*.3+i)*10;
+    const my=((i*247 + t*9)%(CH+40))-20;
     ctx.beginPath(); ctx.arc(mx,my, 1.4+(i%3)*.7, 0, TAU); ctx.fill();
   }
   const bobY = Math.sin(t*0.8)*5;
-  // island shadow blob
   ctx.fillStyle='rgba(90,50,110,.18)';
   ctx.beginPath(); ctx.ellipse(CW/2, CH*0.46 + 150 + bobY*0.3, 150, 30, 0, 0, TAU); ctx.fill();
 
-  // blocks, painter's order
   const sorted=[...B].sort((a,b2)=>{
     const pa=project(a.x,a.y,a.z), pb=project(b2.x,b2.y,b2.z);
     return (pa.depth - pb.depth) || (a.y - b2.y);
@@ -541,14 +644,12 @@ function frame(now){
     ctx.beginPath(); ctx.moveTo(px, py-26+wob*.3);
     ctx.arc(px, py-26+wob*.3, R, Math.PI+Math.PI/4, Math.PI+Math.PI/2); ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#FF8B7E';
-    for(let i=0;i<4;i++){ ctx.beginPath(); ctx.arc(px-R+ (i+0.5)*(R/2), py-26+wob*.3, R/4.4, 0, Math.PI); ctx.fill(); }
+    for(let i=0;i<4;i++){ ctx.beginPath(); ctx.arc(px-R+(i+0.5)*(R/2), py-26+wob*.3, R/4.4, 0, Math.PI); ctx.fill(); }
   }
 
-  // walkers, sorted by depth among themselves (drawn over blocks — fine for tops)
   const ws=[...walkers].sort((a,b2)=>walkerScreen(a).depth - walkerScreen(b2).depth);
   for(const w of ws) drawWalker(w, bobY);
 
-  // particles (screen space)
   for(const p of particles){
     ctx.globalAlpha=clamp(p.life/p.max,0,1);
     ctx.fillStyle=p.color;
@@ -559,21 +660,18 @@ function frame(now){
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-refreshGate();
+loadWorld(parseInt(localStorage.getItem('btw_world')||'0') || 0);
 
 /* debug handle for tests */
 window.__tw = {
-  state: ()=>({ mode, yaw, yawTarget, snap: snapIndex(yawTarget), connected: !!currentPath, saved: savedCount, melted: meltedCount, parasols: parasols.length }),
+  state: ()=>({ mode, wi, yaw, yawTarget, snap: snapIndex(yawTarget), saved: savedCount, melted: meltedCount,
+                parasols: parasols.length, waiting: walkers.filter(w=>w.waiting).length,
+                tiles: walkers.map(w=>keyOf(w.tile)) }),
+  pathAt: i=>{ const keep=G; G=graphAt(i); const p=routeFrom(DOOR); G=keep; return p && p.length; },
+  setYaw: i=>{ yaw = yawTarget = SNAPS[i]; if(mode==='spin') refreshGate(); else G = graphAt(i); },
+  load: i=>loadWorld(i),
+  open: ()=>openDoors(),
   tileXY: (x,y,z)=>{ const q=project(x,y+1,z); return { x: CW/2+q.sx, y: CH*0.46+q.sy }; },
-  pathAt: i=>{ const p=findPath(i); return p && p.length; },
-  setYaw: i=>{ yaw = yawTarget = SNAPS[i]; refreshGate(); },
-  uv: i=>{ // diagnostic: projected screen-grid coords of every walkable top
-    const a = SNAPS[i];
-    return TOPS.map(t=>{
-      const p = project(t.x, t.y+1, t.z, a);
-      return { m:t.m, k:keyOf(t), u:Math.round(p.sx/TILE), v:Math.round(p.sy/(TILE*0.5)), d:+p.depth.toFixed(2) };
-    });
-  },
 };
 </script>
 </body>
