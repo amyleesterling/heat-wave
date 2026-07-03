@@ -294,6 +294,8 @@ const sfx = {
   pop(){ tone(500,0.07,'square',0.10,900); },
   win(){ [523,659,784,1047].forEach((f,i)=>tone(f,0.22,'sine',0.14,null,i*0.11)); },
   lose(){ [392,330,262].forEach((f,i)=>tone(f,0.3,'sine',0.12,null,i*0.18)); },
+  rotate(){ tone(150,0.12,'square',0.10,80); tone(95,0.10,'square',0.08,null,0.10); },
+  buzz(){ tone(110,0.2,'sawtooth',0.07,70); },
 };
 
 /* ---------------- leaderboard (Supabase) ----------------
@@ -434,24 +436,24 @@ const LEVELS = [
     tools:{ umbrella:2, sprinkler:1, cart:1 }, cartStock:5,
     ctrl:[{x:80,y:262,z:0},{x:300,y:300,z:28},{x:120,y:392,z:52},{x:308,y:470,z:40},{x:130,y:556,z:18},{x:322,y:648,z:0}] },
   { name:"Synergy Crossing", temp:103,
-    brief:"Mandatory team-building walk. The team is building resentment. Save <b>7</b> before they pivot to liquid.",
+    brief:"Mandatory team-building walk — now featuring the <b>rotunda</b>. Tap it to spin the bridge into place; the queue will simply cook until you do. Save <b>7</b>.",
     heat:11, count:10, quota:7, interval:1.9, speed:45,
-    tools:{ umbrella:3, sprinkler:1, cart:1 }, cartStock:5,
+    tools:{ umbrella:3, sprinkler:1, cart:1 }, cartStock:5, rotor:{at:0.52, r:50},
     ctrl:[{x:210,y:258,z:0},{x:330,y:330,z:22},{x:296,y:452,z:50},{x:158,y:430,z:62},{x:118,y:552,z:34},{x:250,y:592,z:12},{x:332,y:662,z:0}] },
   { name:"Q3 Sizzle", temp:105,
     brief:"Leadership says “heat is a mindset.” Leadership is on a boat. <b>7</b> of <b>11</b> must reach the water.",
     heat:12, count:11, quota:7, interval:1.8, speed:44,
-    tools:{ umbrella:2, sprinkler:2, cart:1 }, cartStock:6,
+    tools:{ umbrella:2, sprinkler:2, cart:1 }, cartStock:6, rotor:{at:0.46, r:48},
     ctrl:[{x:84,y:256,z:0},{x:320,y:288,z:16},{x:336,y:382,z:42},{x:104,y:368,z:56},{x:88,y:478,z:40},{x:322,y:462,z:56},{x:330,y:566,z:34},{x:128,y:552,z:46},{x:170,y:648,z:14},{x:330,y:668,z:0}] },
   { name:"The Asphalt Gauntlet", temp:108,
     brief:"Facilities “ran out” of umbrellas. The vending machine only sells soup. Deliver <b>8</b> souls.",
     heat:13, count:12, quota:8, interval:1.7, speed:44,
-    tools:{ umbrella:1, sprinkler:2, cart:1 }, cartStock:7,
+    tools:{ umbrella:1, sprinkler:2, cart:1 }, cartStock:7, rotor:{at:0.5, r:50},
     ctrl:[{x:92,y:262,z:0},{x:180,y:336,z:26},{x:262,y:406,z:52},{x:318,y:486,z:36},{x:212,y:562,z:14},{x:318,y:652,z:0}] },
   { name:"Heat Dome Friday", temp:112,
     brief:"The heat dome has an agenda and it’s not hybrid-friendly. This is the big one: <b>9</b> must make it. Godspeed, and remember — fan liberally.",
     heat:14.5, count:13, quota:9, interval:1.6, speed:43,
-    tools:{ umbrella:2, sprinkler:2, cart:2 }, cartStock:6,
+    tools:{ umbrella:2, sprinkler:2, cart:2 }, cartStock:6, rotor:{at:0.42, r:48},
     ctrl:[{x:80,y:256,z:0},{x:310,y:284,z:20},{x:330,y:376,z:46},{x:96,y:360,z:62},{x:84,y:470,z:44},{x:316,y:452,z:60},{x:328,y:558,z:40},{x:120,y:544,z:50},{x:158,y:646,z:18},{x:328,y:670,z:0}] },
 ];
 function endlessLevel(n){ // n = 1,2,3...
@@ -462,7 +464,7 @@ function endlessLevel(n){ // n = 1,2,3...
     heat:14.5+n*0.9, count:13+Math.min(n,8), quota:8+Math.min(n,6),
     interval:Math.max(1.1,1.6-n*0.05), speed:43,
     tools:{ umbrella:2, sprinkler:2, cart:2 }, cartStock:6+Math.min(n,4),
-    ctrl:base.ctrl, endless:true,
+    ctrl:base.ctrl, rotor:base.rotor, endless:true,
   };
 }
 
@@ -470,7 +472,7 @@ function endlessLevel(n){ // n = 1,2,3...
 const S = { mode:'title' };  // title | intro | playing | done
 let levelIndex = 0, endlessDay = 0;
 let level=null, path=null;
-let walkers=[], placed=[], particles=[], puddles=[], usedNames=[];
+let walkers=[], placed=[], particles=[], puddles=[], usedNames=[], rotor=null;
 let toolStock={}, selectedTool=null, hoverPos=null;
 let spawned=0, savedCount=0, meltedCount=0, spawnTimer=0, endTimer=-1, playT=0;
 let meltJokes=[], endlessChilled=0, lastRun=null;
@@ -560,6 +562,18 @@ function startLevel(idx, endlessN=0){
   level = endlessN>0 ? endlessLevel(endlessN) : LEVELS[idx];
   path = buildPath(level.ctrl);
   walkers=[]; placed=[]; particles=[]; puddles=[]; usedNames=[]; meltJokes=[];
+  rotor = null;
+  if(level.rotor){
+    const d0 = level.rotor.at * path.length, r = level.rotor.r;
+    const c = path.at(d0);
+    let dIn = d0, dOut = d0; // walk outward to where the path crosses the disc edge
+    while(dIn > 0 && dist2(path.at(dIn).x, path.at(dIn).y, c.x, c.y) < r*r) dIn -= 4;
+    while(dOut < path.length && dist2(path.at(dOut).x, path.at(dOut).y, c.x, c.y) < r*r) dOut += 4;
+    const pin = path.at(dIn), pout = path.at(dOut);
+    rotor = { x:c.x, y:c.y, z:c.z||0, r, dIn, dOut, wob:0,
+      base: Math.atan2(pout.y-pin.y, pout.x-pin.x),
+      angle: Math.PI/2, target: Math.PI/2 }; // starts misaligned on purpose
+  }
   toolStock = {...level.tools};
   selectedTool=null; hoverPos=null;
   spawned=0; savedCount=0; meltedCount=0; spawnTimer=0.8; endTimer=-1; playT=0;
@@ -586,6 +600,13 @@ function beginPlay(){
   el.introModal.classList.add('hidden');
   S.mode='playing';
   audio();
+  if(rotor) toast('Tap the rotunda to spin the bridge 🌀', true);
+}
+function rotorAligned(){
+  if(!rotor) return true;
+  if(Math.abs(rotor.target - rotor.angle) > 0.05) return false; // still turning
+  const m = ((rotor.angle % Math.PI) + Math.PI) % Math.PI;
+  return m < 0.1 || m > Math.PI - 0.1;
 }
 function finishLevel(){
   S.mode='done';
@@ -709,6 +730,17 @@ canvas.addEventListener('pointerdown', e=>{
     hoverPos=null; refreshToolbar();
     return;
   }
+  // spin the rotunda
+  if(rotor && dist2(p.x, p.y, rotor.x, rotor.y - rotor.z) < (rotor.r+10)*(rotor.r+10)){
+    const occupied = walkers.some(w => w.state==='walk' && w.d > rotor.dIn - 4 && w.d < rotor.dOut + 4);
+    if(occupied){
+      rotor.wob = 1; sfx.buzz();
+      toast("There are PEOPLE on that.");
+    } else {
+      rotor.target += Math.PI/2; sfx.rotate();
+    }
+    return;
+  }
   // fan a walker
   let best=null, bd=42*42;
   for(const w of walkers){
@@ -775,6 +807,11 @@ function update(dt){
     if(spawnTimer<=0){ spawnWalker(); spawnTimer = level.interval * rand(0.85,1.15); }
   }
 
+  if(rotor){
+    rotor.angle += (rotor.target - rotor.angle) * Math.min(1, dt*7);
+    rotor.wob = Math.max(0, rotor.wob - dt*2);
+  }
+
   for(const item of placed){
     item.t += dt;
     if(item.key==='sprinkler'){
@@ -785,9 +822,14 @@ function update(dt){
 
   for(let i=walkers.length-1;i>=0;i--){
     const w = walkers[i];
-    w.fanCd -= dt; w.phase += dt*9;
+    w.fanCd -= dt; w.phase += dt*(w.waiting ? 2 : 9);
     if(w.state==='walk'){
-      w.d += w.speed*dt * (w.popT>0 ? 1.06 : 1);
+      let nd = w.d + w.speed*dt * (w.popT>0 ? 1.06 : 1);
+      w.waiting = false;
+      if(rotor && !rotorAligned() && w.d < rotor.dIn - 2 && nd >= rotor.dIn - 2){
+        nd = rotor.dIn - 2; w.waiting = true; // queue at the gap, in the sun, furious
+      }
+      w.d = nd;
       const pos = path.at(w.d);
       // environment
       let factor = 1, cool = 0;
@@ -898,14 +940,40 @@ function drawBackground(t){
 
 function drawPathRibbon(){
   const pts = path.pts, w = 14;
+  // the rotunda owns its span of the path — the ribbon breaks around it
+  const gap = p => rotor && dist2(p.x, p.y, rotor.x, rotor.y) < (rotor.r-8)*(rotor.r-8);
+  const stroked = (fx, fy) => {
+    ctx.beginPath(); let pen = false;
+    for(const p of pts){
+      if(gap(p)){ pen = false; continue; }
+      pen ? ctx.lineTo(fx(p), fy(p)) : (ctx.moveTo(fx(p), fy(p)), pen = true);
+    }
+    ctx.stroke();
+  };
   ctx.lineCap='round'; ctx.lineJoin='round';
   // shadow cast on the plaza below
   ctx.strokeStyle = 'rgba(120,60,40,.20)'; ctx.lineWidth = 32;
-  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x+p.z*0.22+4,p.y+4):ctx.moveTo(p.x+p.z*0.22+4,p.y+4)); ctx.stroke();
-  // extruded front wall, monument-style faceted shading
+  stroked(p=>p.x+p.z*0.22+4, p=>p.y+4);
+  // slender support columns beneath the floating deck
+  let acc = 0;
+  for(let i=1;i<pts.length;i++){
+    const p = pts[i];
+    acc += Math.hypot(p.x-pts[i-1].x, p.y-pts[i-1].y);
+    if(acc < 85 || p.z < 26 || gap(p)) continue;
+    acc = 0;
+    const top = p.y - p.z + 15, bot = p.y + 3;
+    ctx.fillStyle = 'rgba(120,60,40,.18)';
+    ctx.beginPath(); ctx.ellipse(p.x + p.z*0.22 + 3, bot+2, 9, 3.4, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#C08558'; ctx.fillRect(p.x-4.5, top, 9, bot-top);
+    ctx.fillStyle = '#A96F47'; ctx.fillRect(p.x+0.5, top, 4, bot-top);   // shaded half
+    ctx.fillStyle = '#CE9264'; ctx.fillRect(p.x-6.5, top, 13, 4);        // capital
+    ctx.fillStyle = '#B37A4E'; ctx.fillRect(p.x-6.5, bot-3, 13, 3);      // base
+  }
+  // extruded deck side — a floating slab, monument-style faceted shading
+  const deckBottom = p => Math.min(p.y + p.ny*w + 2, p.y + p.ny*w - p.z + 17);
   for(let i=1;i<pts.length;i++){
     const a=pts[i-1], b=pts[i];
-    if(a.z<1 && b.z<1) continue;
+    if((a.z<1 && b.z<1) || gap(a) || gap(b)) continue;
     const tx=b.x-a.x, len=Math.hypot(tx,b.y-a.y)||1;
     const shade = 0.72 + 0.24*Math.max(0, tx/len);
     ctx.fillStyle = ctx.strokeStyle = `rgb(${Math.round(219*shade)},${Math.round(154*shade)},${Math.round(108*shade)})`;
@@ -913,20 +981,59 @@ function drawPathRibbon(){
     ctx.beginPath();
     ctx.moveTo(a.x+a.nx*w, a.y+a.ny*w - a.z);
     ctx.lineTo(b.x+b.nx*w, b.y+b.ny*w - b.z);
-    ctx.lineTo(b.x+b.nx*w, b.y+b.ny*w + 2);
-    ctx.lineTo(a.x+a.nx*w, a.y+a.ny*w + 2);
+    ctx.lineTo(b.x+b.nx*w, deckBottom(b));
+    ctx.lineTo(a.x+a.nx*w, deckBottom(a));
     ctx.closePath(); ctx.fill(); ctx.stroke();
   }
   // walkway top (drawn at elevation)
   ctx.strokeStyle = '#FBEED3'; ctx.lineWidth = 30;
-  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y-p.z):ctx.moveTo(p.x,p.y-p.z)); ctx.stroke();
+  stroked(p=>p.x, p=>p.y-p.z);
   // front-edge lip for definition
   ctx.strokeStyle = 'rgba(200,140,95,.45)'; ctx.lineWidth = 2.5;
-  ctx.beginPath(); pts.forEach((p,i)=>{ const x=p.x+p.nx*w, y=p.y+p.ny*w-p.z; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
+  stroked(p=>p.x+p.nx*w, p=>p.y+p.ny*w-p.z);
   // dashed center line
   ctx.strokeStyle = 'rgba(224,158,111,.55)'; ctx.lineWidth = 2; ctx.setLineDash([8,10]);
-  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y-p.z):ctx.moveTo(p.x,p.y-p.z)); ctx.stroke();
+  stroked(p=>p.x, p=>p.y-p.z);
   ctx.setLineDash([]);
+}
+
+function drawRotor(t){
+  if(!rotor) return;
+  const r = rotor.r, x = rotor.x, y = rotor.y - rotor.z;
+  const wobble = Math.sin(t*40) * rotor.wob * 0.06;
+  // ground shadow
+  ctx.fillStyle = 'rgba(120,60,40,.20)';
+  ctx.beginPath(); ctx.ellipse(rotor.x + rotor.z*0.22 + 4, rotor.y + 4, r*0.95, r*0.42, 0, 0, TAU); ctx.fill();
+  // centre column down to the plaza
+  ctx.fillStyle = '#B37A4E'; ctx.fillRect(x-8, y+r*0.3, 16, rotor.y - y - r*0.3 + 3);
+  ctx.fillStyle = '#A96F47'; ctx.fillRect(x+1, y+r*0.3, 7, rotor.y - y - r*0.3 + 3);
+  // slab side
+  ctx.fillStyle = '#C98F60';
+  ctx.beginPath(); ctx.ellipse(x, y+15, r, r*0.62, 0, 0, TAU); ctx.fill();
+  // disc top
+  ctx.fillStyle = '#EED9B7';
+  ctx.beginPath(); ctx.ellipse(x, y, r, r*0.62, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(200,140,95,.5)'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.ellipse(x, y, r, r*0.62, 0, 0, TAU); ctx.stroke();
+  // invite-a-tap pulse while misaligned
+  if(!rotorAligned()){
+    ctx.strokeStyle = `rgba(255,255,255,${0.35 + Math.sin(t*4)*0.25})`; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(x, y, r+7, (r+7)*0.62, 0, 0, TAU); ctx.stroke();
+  }
+  // rotating bridge bar, drawn in the disc's squashed space
+  const base = Math.atan2(Math.sin(rotor.base)/0.62, Math.cos(rotor.base));
+  ctx.save();
+  ctx.translate(x, y); ctx.scale(1, 0.62); ctx.rotate(base + rotor.angle + wobble);
+  ctx.fillStyle = '#FBEED3';
+  roundRect(-r+3, -15, 2*r-6, 30, 15); ctx.fill();
+  ctx.strokeStyle = 'rgba(224,158,111,.55)'; ctx.lineWidth = 2; ctx.setLineDash([8,10]);
+  ctx.beginPath(); ctx.moveTo(-r+10, 0); ctx.lineTo(r-10, 0); ctx.stroke(); ctx.setLineDash([]);
+  ctx.restore();
+  // pivot cap
+  ctx.fillStyle = '#D77A63';
+  ctx.beginPath(); ctx.ellipse(x, y, 7, 4.6, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.5)';
+  ctx.beginPath(); ctx.ellipse(x-1.6, y-1.2, 2.2, 1.4, 0, 0, TAU); ctx.fill();
 }
 
 function drawBuilding(door, kind, t){
@@ -957,6 +1064,17 @@ function drawBuilding(door, kind, t){
     if(kind==='cool' && (r+c)%2===0){ // frosty glow
       ctx.fillStyle='rgba(255,255,255,.5)'; ctx.fillRect(wx,wy+11,14,5);
     }
+  }
+  // rooftop water tower (hot building only)
+  if(kind==='hot'){
+    const wx = x+bw-34, wb = y - depth*0.7;
+    ctx.strokeStyle='#8A5A45'; ctx.lineWidth=2.5;
+    ctx.beginPath(); ctx.moveTo(wx+5, wb-8); ctx.lineTo(wx+3, wb+1); ctx.moveTo(wx+17, wb-8); ctx.lineTo(wx+19, wb+1); ctx.stroke();
+    ctx.fillStyle='#B98A5A'; roundRect(wx+1, wb-24, 20, 16, 3); ctx.fill();
+    ctx.strokeStyle='rgba(90,50,35,.4)'; ctx.lineWidth=1.4;
+    ctx.beginPath(); ctx.moveTo(wx+2, wb-19); ctx.lineTo(wx+20, wb-19); ctx.moveTo(wx+2, wb-13); ctx.lineTo(wx+20, wb-13); ctx.stroke();
+    ctx.fillStyle='#8F5B48';
+    ctx.beginPath(); ctx.moveTo(wx-2, wb-24); ctx.lineTo(wx+24, wb-24); ctx.lineTo(wx+11, wb-34); ctx.closePath(); ctx.fill();
   }
   // door arch
   const dx = clamp(door.x, x+22, x+bw-22);
@@ -996,6 +1114,9 @@ function drawPool(end, t){
   ctx.beginPath(); ctx.ellipse(cx, cy, 72, 36, 0, 0, TAU); ctx.fill();
   ctx.fillStyle = '#5BBCDD';
   ctx.beginPath(); ctx.ellipse(cx+4, cy+4, 58, 27, 0, 0, TAU); ctx.fill();
+  // inner rim shadow — the water has depth now
+  ctx.strokeStyle = 'rgba(25,85,115,.28)'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.ellipse(cx, cy+1, 68, 33, 0, Math.PI, TAU); ctx.stroke();
   // drifting shimmer lines
   ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
   for(let i=0;i<4;i++){
@@ -1247,6 +1368,19 @@ function drawWalker(w, t){
 
   ctx.restore();
 
+  // impatient "…" while queued at the rotunda
+  if(w.waiting && w.state==='walk'){
+    const by = pos.y - elev - 52;
+    ctx.fillStyle = 'rgba(255,246,232,.9)';
+    roundRect(pos.x-11, by-6, 22, 12, 6); ctx.fill();
+    ctx.fillStyle = '#5A3A4A';
+    for(let i=0;i<3;i++){
+      const on = Math.floor(t*2.5)%3 >= i ? 1 : 0.25;
+      ctx.globalAlpha = on;
+      ctx.beginPath(); ctx.arc(pos.x-5+i*5, by, 1.6, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
   // heat bar
   if(w.state==='walk' && w.heat>18){
     const bw = 18, bx = pos.x-bw/2, by = pos.y-elev-46;
@@ -1279,6 +1413,7 @@ function render(t){
   if(!path) return;
 
   drawPathRibbon();
+  drawRotor(t);
   drawPool(path.end, t);
   for(const p of puddles) drawPuddle(p, t);
   drawBuilding(path.start, 'hot', t);
@@ -1301,6 +1436,15 @@ function render(t){
 
   drawParticles();
 }
+
+/* tiny debug handle for automated tests */
+window.__bth = {
+  state: () => ({ rotor, saved: savedCount, melted: meltedCount, aligned: rotorAligned(), waiting: walkers.filter(w=>w.waiting).length }),
+  toScreen(wx, wy){
+    const r = canvas.getBoundingClientRect(), s = Math.min(r.width/W, r.height/H);
+    return { x: r.left + (r.width - W*s)/2 + wx*s, y: r.top + (r.height - H*s)/2 + wy*s };
+  },
+};
 
 /* ---------------- main loop ---------------- */
 let last = performance.now();
