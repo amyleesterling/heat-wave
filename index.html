@@ -303,7 +303,7 @@ const sfx = {
    by RLS on the table (see supabase/leaderboard.sql).       */
 const LB = {
   url: 'https://amyxocqdfcaeieerqllv.supabase.co',
-  key: '',   // Supabase anon/publishable key goes here
+  key: 'sb_publishable_uvng-9IdwolvuiCG9pQTIQ_1gyaKOVH', // publishable — safe in client, writes RLS-gated
   table: 'heatwave_scores',
 };
 const lbHeaders = () => {
@@ -333,6 +333,7 @@ const TAGLINES = [
   "Somebody scheduled an offsite. In July. Outside.",
   "The forecast: hot, with a chance of quarterly melting.",
   "The pool is open. The org chart is not ready.",
+  "Now with 40% more skybridge.",
 ];
 const NAMES = [
   "Gary from Accounting","Deb from Legal","Chad from Synergy","Priya from Product",
@@ -368,21 +369,32 @@ const PANTS = ['#5A5F73','#7A6A5A','#4A566A','#6B5B6E','#8A8578'];
 function catmullRom(ctrl, seg=22){
   const P = [ctrl[0], ...ctrl, ctrl[ctrl.length-1]];
   const out = [];
+  const cr = (a,b,c,d,t)=>{ const t2=t*t, t3=t2*t;
+    return 0.5*((2*b)+(-a+c)*t+(2*a-5*b+4*c-d)*t2+(-a+3*b-3*c+d)*t3); };
   for(let i=1;i<P.length-2;i++){
     const p0=P[i-1], p1=P[i], p2=P[i+1], p3=P[i+2];
     for(let j=0;j<seg;j++){
-      const t=j/seg, t2=t*t, t3=t2*t;
+      const t=j/seg;
       out.push({
-        x: 0.5*((2*p1.x)+(-p0.x+p2.x)*t+(2*p0.x-5*p1.x+4*p2.x-p3.x)*t2+(-p0.x+3*p1.x-3*p2.x+p3.x)*t3),
-        y: 0.5*((2*p1.y)+(-p0.y+p2.y)*t+(2*p0.y-5*p1.y+4*p2.y-p3.y)*t2+(-p0.y+3*p1.y-3*p2.y+p3.y)*t3),
+        x: cr(p0.x,p1.x,p2.x,p3.x,t),
+        y: cr(p0.y,p1.y,p2.y,p3.y,t),
+        z: Math.max(0, cr(p0.z||0,p1.z||0,p2.z||0,p3.z||0,t)),
       });
     }
   }
-  out.push({...ctrl[ctrl.length-1]});
+  out.push({ x:ctrl[ctrl.length-1].x, y:ctrl[ctrl.length-1].y, z:ctrl[ctrl.length-1].z||0 });
   return out;
 }
 function buildPath(ctrl){
   const pts = catmullRom(ctrl);
+  // per-point screen normal (perpendicular, pointing down-screen) for the wall extrusion
+  for(let i=0;i<pts.length;i++){
+    const a = pts[Math.max(i-1,0)], b = pts[Math.min(i+1,pts.length-1)];
+    const tx=b.x-a.x, ty=b.y-a.y, len=Math.hypot(tx,ty)||1;
+    let nx=-ty/len, ny=tx/len;
+    if(ny<0){ nx=-nx; ny=-ny; }
+    pts[i].nx=nx; pts[i].ny=ny;
+  }
   const cum = [0];
   for(let i=1;i<pts.length;i++)
     cum.push(cum[i-1] + Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y));
@@ -395,6 +407,7 @@ function buildPath(ctrl){
     return {
       x: lerp(pts[i-1].x, pts[i].x, t),
       y: lerp(pts[i-1].y, pts[i].y, t),
+      z: lerp(pts[i-1].z, pts[i].z, t),
       dx: (pts[i].x-pts[i-1].x),
     };
   }
@@ -414,32 +427,32 @@ const LEVELS = [
     brief:"It’s 98°F and the office pool pass finally cleared legal. Get <b>5</b> coworkers to the water. Tap a tool, then tap the street. Tap a person to fan them — they love that.",
     heat:8.5, count:8, quota:5, interval:2.3, speed:46,
     tools:{ umbrella:2, sprinkler:1, cart:1 }, cartStock:4,
-    ctrl:[{x:88,y:268},{x:200,y:300},{x:298,y:362},{x:274,y:468},{x:170,y:530},{x:206,y:622},{x:330,y:656}] },
+    ctrl:[{x:88,y:268,z:0},{x:200,y:300,z:14},{x:298,y:362,z:40},{x:274,y:468,z:52},{x:170,y:530,z:30},{x:206,y:622,z:10},{x:330,y:656,z:0}] },
   { name:"The Long Lunch", temp:101,
     brief:"Someone booked the taco place <i>across town</i>. The sidewalk is technically lava-adjacent. <b>6</b> must survive.",
     heat:10, count:9, quota:6, interval:2.1, speed:46,
     tools:{ umbrella:2, sprinkler:1, cart:1 }, cartStock:5,
-    ctrl:[{x:80,y:262},{x:300,y:300},{x:120,y:392},{x:308,y:470},{x:130,y:556},{x:322,y:648}] },
+    ctrl:[{x:80,y:262,z:0},{x:300,y:300,z:28},{x:120,y:392,z:52},{x:308,y:470,z:40},{x:130,y:556,z:18},{x:322,y:648,z:0}] },
   { name:"Synergy Crossing", temp:103,
     brief:"Mandatory team-building walk. The team is building resentment. Save <b>7</b> before they pivot to liquid.",
     heat:11, count:10, quota:7, interval:1.9, speed:45,
     tools:{ umbrella:3, sprinkler:1, cart:1 }, cartStock:5,
-    ctrl:[{x:210,y:258},{x:330,y:330},{x:296,y:452},{x:158,y:430},{x:118,y:552},{x:250,y:592},{x:332,y:662}] },
+    ctrl:[{x:210,y:258,z:0},{x:330,y:330,z:22},{x:296,y:452,z:50},{x:158,y:430,z:62},{x:118,y:552,z:34},{x:250,y:592,z:12},{x:332,y:662,z:0}] },
   { name:"Q3 Sizzle", temp:105,
     brief:"Leadership says “heat is a mindset.” Leadership is on a boat. <b>7</b> of <b>11</b> must reach the water.",
     heat:12, count:11, quota:7, interval:1.8, speed:44,
     tools:{ umbrella:2, sprinkler:2, cart:1 }, cartStock:6,
-    ctrl:[{x:84,y:256},{x:320,y:288},{x:336,y:382},{x:104,y:368},{x:88,y:478},{x:322,y:462},{x:330,y:566},{x:128,y:552},{x:170,y:648},{x:330,y:668}] },
+    ctrl:[{x:84,y:256,z:0},{x:320,y:288,z:16},{x:336,y:382,z:42},{x:104,y:368,z:56},{x:88,y:478,z:40},{x:322,y:462,z:56},{x:330,y:566,z:34},{x:128,y:552,z:46},{x:170,y:648,z:14},{x:330,y:668,z:0}] },
   { name:"The Asphalt Gauntlet", temp:108,
     brief:"Facilities “ran out” of umbrellas. The vending machine only sells soup. Deliver <b>8</b> souls.",
     heat:13, count:12, quota:8, interval:1.7, speed:44,
     tools:{ umbrella:1, sprinkler:2, cart:1 }, cartStock:7,
-    ctrl:[{x:92,y:262},{x:180,y:336},{x:262,y:406},{x:318,y:486},{x:212,y:562},{x:318,y:652}] },
+    ctrl:[{x:92,y:262,z:0},{x:180,y:336,z:26},{x:262,y:406,z:52},{x:318,y:486,z:36},{x:212,y:562,z:14},{x:318,y:652,z:0}] },
   { name:"Heat Dome Friday", temp:112,
     brief:"The heat dome has an agenda and it’s not hybrid-friendly. This is the big one: <b>9</b> must make it. Godspeed, and remember — fan liberally.",
     heat:14.5, count:13, quota:9, interval:1.6, speed:43,
     tools:{ umbrella:2, sprinkler:2, cart:2 }, cartStock:6,
-    ctrl:[{x:80,y:256},{x:310,y:284},{x:330,y:376},{x:96,y:360},{x:84,y:470},{x:316,y:452},{x:328,y:558},{x:120,y:544},{x:158,y:646},{x:328,y:670}] },
+    ctrl:[{x:80,y:256,z:0},{x:310,y:284,z:20},{x:330,y:376,z:46},{x:96,y:360,z:62},{x:84,y:470,z:44},{x:316,y:452,z:60},{x:328,y:558,z:40},{x:120,y:544,z:50},{x:158,y:646,z:18},{x:328,y:670,z:0}] },
 ];
 function endlessLevel(n){ // n = 1,2,3...
   const base = LEVELS[(n+2) % LEVELS.length];
@@ -701,14 +714,14 @@ canvas.addEventListener('pointerdown', e=>{
   for(const w of walkers){
     if(w.state!=='walk') continue;
     const pos = path.at(w.d);
-    const d2 = dist2(p.x, p.y, pos.x, pos.y-14);
+    const d2 = dist2(p.x, p.y, pos.x, pos.y-(pos.z||0)-14);
     if(d2 < bd){ bd=d2; best=w; }
   }
   if(best && best.fanCd<=0){
     best.heat = Math.max(0, best.heat - 9);
     best.fanCd = 1.1;
     const pos = path.at(best.d);
-    swirl(pos.x, pos.y-16);
+    swirl(pos.x, pos.y-(pos.z||0)-16);
     sfx.fan();
   }
 });
@@ -792,7 +805,7 @@ function update(dt){
       if(w.popT>0){ factor *= 0.45; w.popT -= dt; }
       w.heat += (level.heat*factor - cool) * dt;
       w.heat = clamp(w.heat, 0, 100);
-      if(w.heat > 55 && Math.random() < dt*(w.heat/22)) sweatDrop(pos.x, pos.y-24);
+      if(w.heat > 55 && Math.random() < dt*(w.heat/22)) sweatDrop(pos.x, pos.y-(pos.z||0)-24);
       if(w.heat >= 100){
         w.state='melt'; w.t=0;
         sfx.melt();
@@ -815,7 +828,7 @@ function update(dt){
       w.t += dt/1.15;
       if(w.t>=1){
         const pos = path.at(w.d);
-        puddles.push({x:pos.x, y:pos.y, color:w.shirt, tieHue:w.tieHue, hasBag:w.hasBag, r:rand(15,19), wob:rand(0,TAU)});
+        puddles.push({x:pos.x, y:pos.y-(pos.z||0), color:w.shirt, tieHue:w.tieHue, hasBag:w.hasBag, r:rand(15,19), wob:rand(0,TAU)});
         meltedCount++; el.melted.textContent = meltedCount;
         walkers.splice(i,1);
       }
@@ -884,14 +897,35 @@ function drawBackground(t){
 }
 
 function drawPathRibbon(){
-  const pts = path.pts;
+  const pts = path.pts, w = 14;
   ctx.lineCap='round'; ctx.lineJoin='round';
-  ctx.strokeStyle = 'rgba(120,70,50,.18)'; ctx.lineWidth = 34;
-  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y+3):ctx.moveTo(p.x,p.y+3)); ctx.stroke();
+  // shadow cast on the plaza below
+  ctx.strokeStyle = 'rgba(120,60,40,.20)'; ctx.lineWidth = 32;
+  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x+p.z*0.22+4,p.y+4):ctx.moveTo(p.x+p.z*0.22+4,p.y+4)); ctx.stroke();
+  // extruded front wall, monument-style faceted shading
+  for(let i=1;i<pts.length;i++){
+    const a=pts[i-1], b=pts[i];
+    if(a.z<1 && b.z<1) continue;
+    const tx=b.x-a.x, len=Math.hypot(tx,b.y-a.y)||1;
+    const shade = 0.72 + 0.24*Math.max(0, tx/len);
+    ctx.fillStyle = ctx.strokeStyle = `rgb(${Math.round(219*shade)},${Math.round(154*shade)},${Math.round(108*shade)})`;
+    ctx.lineWidth = 1.5; // stroke seals antialiasing seams between quads
+    ctx.beginPath();
+    ctx.moveTo(a.x+a.nx*w, a.y+a.ny*w - a.z);
+    ctx.lineTo(b.x+b.nx*w, b.y+b.ny*w - b.z);
+    ctx.lineTo(b.x+b.nx*w, b.y+b.ny*w + 2);
+    ctx.lineTo(a.x+a.nx*w, a.y+a.ny*w + 2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // walkway top (drawn at elevation)
   ctx.strokeStyle = '#FBEED3'; ctx.lineWidth = 30;
-  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y)); ctx.stroke();
+  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y-p.z):ctx.moveTo(p.x,p.y-p.z)); ctx.stroke();
+  // front-edge lip for definition
+  ctx.strokeStyle = 'rgba(200,140,95,.45)'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); pts.forEach((p,i)=>{ const x=p.x+p.nx*w, y=p.y+p.ny*w-p.z; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
+  // dashed center line
   ctx.strokeStyle = 'rgba(224,158,111,.55)'; ctx.lineWidth = 2; ctx.setLineDash([8,10]);
-  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y)); ctx.stroke();
+  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y-p.z):ctx.moveTo(p.x,p.y-p.z)); ctx.stroke();
   ctx.setLineDash([]);
 }
 
@@ -1107,6 +1141,7 @@ function drawPuddle(p, t){
 
 function drawWalker(w, t){
   const pos = path.at(w.d);
+  const elev = pos.z || 0;
   const facing = pos.dx >= 0 ? 1 : -1;
   const heat = w.heat/100;
   const bob = Math.sin(w.phase)*1.6;
@@ -1122,7 +1157,7 @@ function drawWalker(w, t){
   }
 
   ctx.save();
-  ctx.translate(pos.x, pos.y - hop);
+  ctx.translate(pos.x, pos.y - elev - hop);
   ctx.globalAlpha = alpha;
 
   // shadow
@@ -1214,7 +1249,7 @@ function drawWalker(w, t){
 
   // heat bar
   if(w.state==='walk' && w.heat>18){
-    const bw = 18, bx = pos.x-bw/2, by = pos.y-46;
+    const bw = 18, bx = pos.x-bw/2, by = pos.y-elev-46;
     ctx.fillStyle='rgba(58,32,48,.35)'; roundRect(bx-1,by-1,bw+2,4.6,2.3); ctx.fill();
     ctx.fillStyle = heat<0.5 ? '#FFD66B' : heat<0.8 ? '#FF9A5C' : '#F0503C';
     roundRect(bx,by,bw*heat,2.6,1.3); ctx.fill();
