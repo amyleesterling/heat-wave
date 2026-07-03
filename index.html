@@ -130,6 +130,23 @@
   .toast.good{ background:rgba(52,140,132,.94); }
   @keyframes toastin{ from{ transform:translateY(-14px) scale(.9); opacity:0 } }
   @keyframes toastout{ to{ transform:translateY(-10px); opacity:0 } }
+
+  /* ---------- leaderboard ---------- */
+  #lbList{ max-height:44vh; overflow-y:auto; text-align:left; margin:8px 0 16px; }
+  .lbrow{ display:flex; align-items:center; gap:8px; font-size:14px; font-weight:700; padding:8px 10px; border-radius:10px; }
+  .lbrow:nth-child(odd){ background:rgba(90,58,74,.06); }
+  .lbrow.me{ background:#FFE1A8; }
+  .lbrow .rank{ opacity:.5; min-width:22px; }
+  .lbrow .nm{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lbrow .sc{ white-space:nowrap; }
+  #lbSubmit{ margin:4px 0 14px; }
+  #lbName{
+    width:100%; border:2px solid rgba(90,58,74,.25); background:#fff; color:var(--ink);
+    border-radius:14px; padding:12px 14px; font-family:inherit; font-weight:800; font-size:16px;
+    text-align:center; letter-spacing:.04em; margin-bottom:10px; outline:none;
+  }
+  #lbName:focus{ border-color:var(--coral); }
+  .btn.small{ padding:12px 28px; font-size:16px; }
 </style>
 </head>
 <body>
@@ -157,6 +174,7 @@
   <h1>BEAT<br>THE HEAT</h1>
   <div class="tag" id="tagline"></div>
   <button class="btn" id="playBtn">PLAY</button>
+  <button class="btn ghost" id="lbBtn">🏆 hall of legends</button>
   <button class="btn ghost hidden" id="resetBtn">reset progress</button>
   <div class="tiny">a game about hydration &amp; middle management</div>
 </div>
@@ -181,8 +199,22 @@
       <div class="stat"><b id="resMelted">0</b><span>puddled</span></div>
     </div>
     <div class="obit" id="resObit"></div>
+    <div id="lbSubmit" class="hidden">
+      <input id="lbName" maxlength="14" spellcheck="false" autocomplete="off" placeholder="YOUR NAME">
+      <button class="btn small" id="lbSendBtn">POST SCORE</button>
+      <div class="obit" id="lbMsg"></div>
+    </div>
     <button class="btn" id="resBtn">NEXT</button>
     <button class="btn ghost" id="resMenuBtn">menu</button>
+  </div>
+</div>
+
+<div id="lbModal" class="screen modal-wrap hidden">
+  <div class="modal">
+    <div class="kicker">Infinite Summer</div>
+    <h2>Hall of Legends</h2>
+    <div id="lbList"><div class="brief">loading…</div></div>
+    <button class="btn" id="lbCloseBtn">CLOSE</button>
   </div>
 </div>
 
@@ -256,7 +288,7 @@ function tone(freq, dur, type='sine', vol=0.15, slideTo=null, when=0){
 }
 const sfx = {
   place(){ tone(340,0.09,'triangle',0.2); tone(520,0.12,'triangle',0.14,null,0.06); },
-  save(){ tone(660,0.12,'sine',0.16); tone(880,0.18,'sine',0.14,null,0.09); },
+  save(){ tone(320,0.10,'sine',0.18,120); tone(660,0.12,'sine',0.13,null,0.07); tone(880,0.16,'sine',0.11,null,0.15); },
   melt(){ tone(300,0.55,'sawtooth',0.10,60); tone(150,0.5,'square',0.04,40,0.05); },
   fan(){ tone(1200,0.06,'triangle',0.05,700); },
   pop(){ tone(500,0.07,'square',0.10,900); },
@@ -264,13 +296,43 @@ const sfx = {
   lose(){ [392,330,262].forEach((f,i)=>tone(f,0.3,'sine',0.12,null,i*0.18)); },
 };
 
+/* ---------------- leaderboard (Supabase) ----------------
+   Endless mode is a run: fail a day and the run ends — post
+   {name, day reached, total chilled} to the global board.
+   The anon key is safe to ship in a client; writes are gated
+   by RLS on the table (see supabase/leaderboard.sql).       */
+const LB = {
+  url: 'https://amyxocqdfcaeieerqllv.supabase.co',
+  key: '',   // Supabase anon/publishable key goes here
+  table: 'heatwave_scores',
+};
+const lbHeaders = () => {
+  const h = { apikey: LB.key, 'Content-Type': 'application/json' };
+  if(LB.key.startsWith('eyJ')) h.Authorization = 'Bearer ' + LB.key; // legacy JWT anon keys only
+  return h;
+};
+async function lbTop(){
+  const r = await fetch(`${LB.url}/rest/v1/${LB.table}?select=name,day,chilled&order=day.desc,chilled.desc,created_at.asc&limit=20`, { headers: lbHeaders() });
+  if(!r.ok) throw new Error('leaderboard fetch ' + r.status);
+  return r.json();
+}
+async function lbPost(name, day, chilled){
+  const r = await fetch(`${LB.url}/rest/v1/${LB.table}`, {
+    method:'POST', headers:{ ...lbHeaders(), Prefer:'return=minimal' },
+    body: JSON.stringify({ name, day, chilled }),
+  });
+  if(!r.ok) throw new Error('leaderboard post ' + r.status);
+}
+const escapeHtml = s => s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
 /* ---------------- flavor text ---------------- */
 const TAGLINES = [
   "It’s 104°F. The dress code, tragically, survives.",
-  "Guide the business-casual to the AC. Or don’t. HR is watching.",
+  "Guide the business-casual to the pool. HR is watching.",
   "Lemmings, but with lanyards.",
   "Somebody scheduled an offsite. In July. Outside.",
   "The forecast: hot, with a chance of quarterly melting.",
+  "The pool is open. The org chart is not ready.",
 ];
 const NAMES = [
   "Gary from Accounting","Deb from Legal","Chad from Synergy","Priya from Product",
@@ -290,11 +352,12 @@ const MELT_LINES = [
   "RIP %s. The loafers survived.",
 ];
 const SAVE_LINES = [
-  "%s made it! Promotion pending.",
-  "%s reached the AC and wept softly.",
-  "%s survived. The commute did not break them.",
+  "%s cannonballed into glory.",
+  "%s belly-flopped magnificently. 9.8 from the judges.",
+  "%s is doing laps in business casual.",
+  "%s made it! The khakis are ruined. Worth it.",
+  "%s dove in still holding the briefcase.",
   "%s is now aggressively hydrated.",
-  "%s made it and took all the good cold brew.",
 ];
 const SKIN = ['#F6C9A0','#E8B48A','#C68B59','#8D5A3A','#6B4226','#FADCBA'];
 const HAIR = ['#3B2B27','#5A4632','#141414','#8A6A4F','#B9B0A6','#7A3B2E','#D8A24A'];
@@ -348,7 +411,7 @@ const TOOL_DEFS = {
 /* ---------------- levels ---------------- */
 const LEVELS = [
   { name:"Casual Friday", temp:98,
-    brief:"It’s 98°F and Gary forgot the sunscreen budget in Q2. Get <b>5</b> coworkers across the plaza. Tap a tool, then tap the street. Tap a person to fan them — they love that.",
+    brief:"It’s 98°F and the office pool pass finally cleared legal. Get <b>5</b> coworkers to the water. Tap a tool, then tap the street. Tap a person to fan them — they love that.",
     heat:8.5, count:8, quota:5, interval:2.3, speed:46,
     tools:{ umbrella:2, sprinkler:1, cart:1 }, cartStock:4,
     ctrl:[{x:88,y:268},{x:200,y:300},{x:298,y:362},{x:274,y:468},{x:170,y:530},{x:206,y:622},{x:330,y:656}] },
@@ -363,7 +426,7 @@ const LEVELS = [
     tools:{ umbrella:3, sprinkler:1, cart:1 }, cartStock:5,
     ctrl:[{x:210,y:258},{x:330,y:330},{x:296,y:452},{x:158,y:430},{x:118,y:552},{x:250,y:592},{x:332,y:662}] },
   { name:"Q3 Sizzle", temp:105,
-    brief:"Leadership says “heat is a mindset.” Leadership is on a boat. <b>7</b> of <b>11</b> must reach the AC.",
+    brief:"Leadership says “heat is a mindset.” Leadership is on a boat. <b>7</b> of <b>11</b> must reach the water.",
     heat:12, count:11, quota:7, interval:1.8, speed:44,
     tools:{ umbrella:2, sprinkler:2, cart:1 }, cartStock:6,
     ctrl:[{x:84,y:256},{x:320,y:288},{x:336,y:382},{x:104,y:368},{x:88,y:478},{x:322,y:462},{x:330,y:566},{x:128,y:552},{x:170,y:648},{x:330,y:668}] },
@@ -397,7 +460,7 @@ let level=null, path=null;
 let walkers=[], placed=[], particles=[], puddles=[], usedNames=[];
 let toolStock={}, selectedTool=null, hoverPos=null;
 let spawned=0, savedCount=0, meltedCount=0, spawnTimer=0, endTimer=-1, playT=0;
-let meltJokes=[];
+let meltJokes=[], endlessChilled=0, lastRun=null;
 
 let unlocked = parseInt(localStorage.getItem('bth_unlocked')||'0');
 
@@ -413,6 +476,8 @@ const el = {
   resultModal:$('#resultModal'), resKicker:$('#resKicker'), resTitle:$('#resTitle'),
   resStars:$('#resStars'), resSaved:$('#resSaved'), resMelted:$('#resMelted'),
   resObit:$('#resObit'), resBtn:$('#resBtn'), resMenuBtn:$('#resMenuBtn'),
+  lbBtn:$('#lbBtn'), lbModal:$('#lbModal'), lbList:$('#lbList'), lbCloseBtn:$('#lbCloseBtn'),
+  lbSubmit:$('#lbSubmit'), lbName:$('#lbName'), lbSendBtn:$('#lbSendBtn'), lbMsg:$('#lbMsg'),
 };
 el.tagline.textContent = pick(TAGLINES);
 el.muteBtn.textContent = muted ? '🔇' : '🔊';
@@ -485,7 +550,9 @@ function startLevel(idx, endlessN=0){
   toolStock = {...level.tools};
   selectedTool=null; hoverPos=null;
   spawned=0; savedCount=0; meltedCount=0; spawnTimer=0.8; endTimer=-1; playT=0;
+  if(endlessN===1) endlessChilled=0; // fresh endless run
   el.hint.classList.remove('show');
+  el.lbSubmit.classList.add('hidden');
 
   el.saved.textContent='0'; el.quota.textContent=level.quota;
   el.melted.textContent='0'; el.tempv.textContent=level.temp;
@@ -514,12 +581,29 @@ function finishLevel(){
   const stars = savedCount>=total ? 3 : (savedCount >= level.quota + Math.ceil((total-level.quota)/2) ? 2 : (win?1:0));
   el.resKicker.textContent = level.endless ? `Infinite Summer · Day ${endlessDay}` : 'Quarterly Melt Report';
   el.resTitle.textContent = win
-    ? pick(["Sufficiently Chilled!","The AC Embraces You","Crisis (Mostly) Averted","Cool Under Pressure"])
+    ? pick(["Sufficiently Chilled!","The Pool Embraces You","Crisis (Mostly) Averted","Cool Under Pressure"])
     : pick(["Everyone Is Soup","Thermal Non-Compliance","The Puddle Report Is In"]);
   el.resStars.textContent = win ? '⭐'.repeat(stars)+'☆'.repeat(3-stars) : '🫠';
   el.resSaved.textContent = savedCount; el.resMelted.textContent = meltedCount;
   el.resObit.textContent = meltJokes.length ? pick(meltJokes) : "Zero melts. Legal is thrilled.";
-  el.resBtn.textContent = win ? (level.endless || levelIndex < LEVELS.length-1 ? 'NEXT SHIFT' : 'ENDLESS MODE') : 'TRY AGAIN';
+  el.resBtn.textContent = win ? (level.endless || levelIndex < LEVELS.length-1 ? 'NEXT SHIFT' : 'ENDLESS MODE')
+                              : (level.endless ? 'NEW RUN' : 'TRY AGAIN');
+  if(level.endless){
+    endlessChilled += savedCount;
+    if(!win){ // run over — this is the score
+      lastRun = { day: endlessDay, chilled: endlessChilled };
+      const best = JSON.parse(localStorage.getItem('bth_best')||'null');
+      if(!best || lastRun.day > best.day || (lastRun.day === best.day && lastRun.chilled > best.chilled))
+        localStorage.setItem('bth_best', JSON.stringify(lastRun));
+      el.resKicker.textContent = `Run over — Day ${lastRun.day} · ${lastRun.chilled} chilled total`;
+      if(LB.key){
+        el.lbSubmit.classList.remove('hidden');
+        el.lbName.value = localStorage.getItem('bth_name')||'';
+        el.lbMsg.textContent = 'Post your run to the Hall of Legends?';
+        el.lbSendBtn.disabled = false;
+      }
+    }
+  }
   el.resultModal.classList.remove('hidden');
   if(win){
     sfx.win();
@@ -541,11 +625,46 @@ el.muteBtn.addEventListener('click', ()=>{
 });
 el.resBtn.addEventListener('click', ()=>{
   const win = savedCount >= level.quota;
-  if(!win){ startLevel(levelIndex, endlessDay); return; }
+  if(!win){ startLevel(levelIndex, level.endless ? 1 : 0); return; } // endless loss = new run from day 1
   if(level.endless){ startLevel(levelIndex, endlessDay+1); return; }
   if(levelIndex < LEVELS.length-1) startLevel(levelIndex+1);
   else startLevel(levelIndex, 1);
 });
+el.lbBtn.addEventListener('click', ()=>openLeaderboard());
+el.lbCloseBtn.addEventListener('click', ()=>el.lbModal.classList.add('hidden'));
+el.lbSendBtn.addEventListener('click', async ()=>{
+  if(!lastRun) return;
+  const name = (el.lbName.value.trim() || 'Anonymous Intern').slice(0,14);
+  localStorage.setItem('bth_name', name);
+  el.lbSendBtn.disabled = true; el.lbMsg.textContent = 'filing the paperwork…';
+  try{
+    await lbPost(name, lastRun.day, lastRun.chilled);
+    el.lbSubmit.classList.add('hidden');
+    openLeaderboard(name);
+  }catch(err){
+    el.lbMsg.textContent = 'The fax machine jammed. Try again?';
+    el.lbSendBtn.disabled = false;
+  }
+});
+async function openLeaderboard(hl){
+  el.lbModal.classList.remove('hidden');
+  const best = JSON.parse(localStorage.getItem('bth_best')||'null');
+  const bestLine = best ? `Your best: Day ${best.day} · 🧊${best.chilled}` : '';
+  if(!LB.key){
+    el.lbList.innerHTML = `<div class="brief">${bestLine || 'No endless runs yet — beat the campaign to unlock Infinite Summer.'}<br><br><i>Global board coming online soon.</i></div>`;
+    return;
+  }
+  el.lbList.innerHTML = '<div class="brief">loading…</div>';
+  try{
+    const rows = await lbTop();
+    el.lbList.innerHTML = (rows.length
+      ? rows.map((r,i)=>`<div class="lbrow${hl && r.name===hl ? ' me':''}"><span class="rank">${i+1}</span><span class="nm">${escapeHtml(r.name)}</span><span class="sc">Day ${r.day} · 🧊${r.chilled}</span></div>`).join('')
+      : '<div class="brief">Nobody has survived Infinite Summer yet. Be the first.</div>')
+      + (bestLine ? `<div class="brief" style="margin-top:10px">${bestLine}</div>` : '');
+  }catch(err){
+    el.lbList.innerHTML = '<div class="brief">Couldn’t reach the leaderboard. It’s probably too hot.</div>';
+  }
+}
 el.resMenuBtn.addEventListener('click', ()=>{
   el.resultModal.classList.add('hidden');
   el.hud.classList.add('hidden'); el.toolbar.classList.add('hidden');
@@ -615,11 +734,19 @@ function sprinkDrop(x,y,r){
   const a = rand(0,TAU), rr = rand(6, r*0.9);
   particles.push({x, y, vx:Math.cos(a)*rr*1.9, vy:Math.sin(a)*rr*1.1-64, life:.8, max:.8, type:'drop', color:'#8FCDEA', size:rand(1.8,3)});
 }
+function splash(x,y){
+  for(let i=0;i<16;i++){
+    const a = rand(-Math.PI, 0), s = rand(45, 120);
+    particles.push({x, y, vx:Math.cos(a)*s*0.6, vy:Math.sin(a)*s, life:rand(.4,.85), max:.85, type:'drop', color:'#BFE9F7', size:rand(2,3.8)});
+  }
+  particles.push({x, y, vx:0, vy:0, life:.6, max:.6, type:'ripple', color:'#FFFFFF', size:8});
+}
 function updateParticles(dt){
   for(let i=particles.length-1;i>=0;i--){
     const p = particles[i];
     p.life -= dt;
     if(p.life<=0){ particles.splice(i,1); continue; }
+    if(p.type==='ripple') continue; // ripples just expand where they are
     p.vy += (p.type==='drop'?260:120)*dt;
     p.x += p.vx*dt; p.y += p.vy*dt;
   }
@@ -680,7 +807,7 @@ function update(dt){
       if(w.t >= 0.55){
         savedCount++; el.saved.textContent = savedCount;
         sfx.save();
-        burst(path.end.x, path.end.y-16, 12, '#BFEFFF', 70);
+        splash(path.end.x, path.end.y+6);
         if(Math.random()<0.28) toast(pick(SAVE_LINES).replace('%s', w.name), true);
         walkers.splice(i,1);
       }
@@ -823,6 +950,63 @@ function drawBuilding(door, kind, t){
   ctx.fillStyle = '#FFF6E8'; ctx.fillText(sign, x+bw/2-tw/2, y+bh-41);
 }
 
+function drawPool(end, t){
+  const cx = clamp(end.x + 4, 100, W-96), cy = clamp(end.y + 14, 250, H-50);
+  // deck
+  ctx.fillStyle = '#F3DDBE';
+  ctx.beginPath(); ctx.ellipse(cx, cy, 90, 47, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(150,100,70,.25)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(cx, cy, 90, 47, 0, 0, TAU); ctx.stroke();
+  // water
+  ctx.fillStyle = '#7FD1E8';
+  ctx.beginPath(); ctx.ellipse(cx, cy, 72, 36, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#5BBCDD';
+  ctx.beginPath(); ctx.ellipse(cx+4, cy+4, 58, 27, 0, 0, TAU); ctx.fill();
+  // drifting shimmer lines
+  ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  for(let i=0;i<4;i++){
+    const ph = (t*0.35 + i*0.25) % 1;
+    const yy = cy - 20 + ph*40, ww = 44*(1 - Math.abs(ph-0.5)*1.6);
+    if(ww <= 4) continue;
+    ctx.globalAlpha = 0.7*(1 - Math.abs(ph-0.5)*2);
+    ctx.beginPath(); ctx.moveTo(cx-ww, yy); ctx.quadraticCurveTo(cx, yy+3, cx+ww, yy); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // pink donut floatie, drifting
+  const fx = cx - 22 + Math.sin(t*0.6)*8, fy = cy + 6 + Math.cos(t*0.45)*3;
+  ctx.fillStyle = '#FF8FAF';
+  ctx.beginPath(); ctx.ellipse(fx, fy, 11, 7, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#5BBCDD';
+  ctx.beginPath(); ctx.ellipse(fx, fy, 5, 3, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.5)';
+  ctx.beginPath(); ctx.ellipse(fx-4, fy-3, 3, 1.6, -0.4, 0, TAU); ctx.fill();
+  // somebody already made it: bobbing head + drink
+  const bx = cx + 26, by = cy - 2 + Math.sin(t*1.3)*1.6;
+  ctx.fillStyle = '#E8B48A';
+  ctx.beginPath(); ctx.arc(bx, by, 5.5, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = '#3B2B27';
+  ctx.beginPath(); ctx.arc(bx, by-2.2, 4.6, Math.PI*1.1, Math.PI*1.9); ctx.fill();
+  ctx.fillStyle = '#FF6B52';
+  roundRect(bx+8, by-6, 4, 7, 1.5); ctx.fill(); // tiny cocktail
+  // beach umbrella on the deck
+  const ux = cx + 64, uy = cy - 24;
+  ctx.strokeStyle = '#8A5A45'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(ux, uy+16); ctx.lineTo(ux, uy-14); ctx.stroke();
+  ctx.fillStyle = '#FFD66B';
+  ctx.beginPath(); ctx.arc(ux, uy-14, 20, Math.PI, 0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#FF8B7E';
+  for(let i=0;i<2;i++){
+    const a0 = Math.PI + (i*2+0.5)*(Math.PI/4);
+    ctx.beginPath(); ctx.moveTo(ux, uy-14); ctx.arc(ux, uy-14, 20, a0, a0+Math.PI/4); ctx.closePath(); ctx.fill();
+  }
+  // sign
+  const sign = '❄ THE PUBLIC POOL';
+  ctx.font = '800 10px system-ui, sans-serif';
+  const tw = ctx.measureText(sign).width;
+  ctx.fillStyle = 'rgba(0,0,0,.18)'; roundRect(cx-tw/2-6, cy-72, tw+12, 15, 4); ctx.fill();
+  ctx.fillStyle = '#FFF6E8'; ctx.fillText(sign, cx-tw/2, cy-61);
+}
+
 function drawTool(item, t, ghost=false){
   const {x,y} = item;
   ctx.save();
@@ -930,11 +1114,15 @@ function drawWalker(w, t){
 
   let sy = 1, meltDrop = 0;
   if(w.state==='melt'){ sy = 1-w.t; meltDrop = (1-sy)*22; }
-  let alpha = 1, doorPull = 0;
-  if(w.state==='enter'){ alpha = 1 - w.t/0.55; doorPull = w.t*20; }
+  let alpha = 1, hop = 0;
+  if(w.state==='enter'){ // the cannonball
+    const ht = Math.min(w.t/0.55, 1);
+    hop = Math.sin(ht*Math.PI)*18;
+    alpha = 1 - Math.max(0, (w.t-0.34)/0.21);
+  }
 
   ctx.save();
-  ctx.translate(pos.x, pos.y - doorPull);
+  ctx.translate(pos.x, pos.y - hop);
   ctx.globalAlpha = alpha;
 
   // shadow
@@ -1037,7 +1225,11 @@ function drawParticles(){
   for(const p of particles){
     ctx.globalAlpha = clamp(p.life/p.max, 0, 1);
     ctx.fillStyle = p.color;
-    if(p.type==='drop'){
+    if(p.type==='ripple'){
+      const grow = p.size + (1 - p.life/p.max) * 30;
+      ctx.strokeStyle = p.color; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(p.x, p.y, grow, grow*0.45, 0, 0, TAU); ctx.stroke();
+    } else if(p.type==='drop'){
       ctx.beginPath(); ctx.ellipse(p.x, p.y, p.size*0.7, p.size, 0, 0, TAU); ctx.fill();
     } else {
       ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, TAU); ctx.fill();
@@ -1052,6 +1244,7 @@ function render(t){
   if(!path) return;
 
   drawPathRibbon();
+  drawPool(path.end, t);
   for(const p of puddles) drawPuddle(p, t);
   drawBuilding(path.start, 'hot', t);
 
@@ -1060,9 +1253,6 @@ function render(t){
   for(const item of placed) drawables.push({ y:item.y, fn:()=>drawTool(item, t) });
   for(const w of walkers){ const pos = path.at(w.d); drawables.push({ y:pos.y, fn:()=>drawWalker(w, t) }); }
   drawables.sort((a,b)=>a.y-b.y);
-
-  // building B behind if its door is low on screen — draw before low drawables
-  drawBuilding(path.end, 'cool', t);
   for(const d of drawables) d.fn();
 
   if(selectedTool && hoverPos){
