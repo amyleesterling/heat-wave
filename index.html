@@ -200,16 +200,31 @@ let scale = 1, offX = 0, offY = 0, dpr = 1;
 
 function resize(){
   dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-  const cw = window.innerWidth, ch = window.innerHeight;
-  canvas.width = cw * dpr; canvas.height = ch * dpr;
-  scale = Math.min(cw / W, ch / H);
-  offX = (cw - W * scale) / 2;
-  offY = (ch - H * scale) / 2;
+  const r = canvas.getBoundingClientRect();
+  canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
+  scale = Math.min(r.width / W, r.height / H);
+  offX = (r.width - W * scale) / 2;
+  offY = (r.height - H * scale) / 2;
 }
 window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', ()=>setTimeout(resize, 250));
+if(window.visualViewport){
+  visualViewport.addEventListener('resize', resize);
+  visualViewport.addEventListener('scroll', resize);
+}
 resize();
+setTimeout(resize, 350); // iOS settles its viewport late
 
-const toWorld = (cx, cy) => ({ x: (cx - offX) / scale, y: (cy - offY) / scale });
+// clientX/Y and getBoundingClientRect share a coordinate space on every
+// browser, so mapping through a fresh rect survives iOS viewport quirks.
+function toWorld(cx, cy){
+  const r = canvas.getBoundingClientRect();
+  const s = Math.min(r.width / W, r.height / H);
+  return {
+    x: (cx - r.left - (r.width - W * s) / 2) / s,
+    y: (cy - r.top  - (r.height - H * s) / 2) / s,
+  };
+}
 
 /* ---------------- utils ---------------- */
 const clamp = (v,a,b)=> v<a?a : v>b?b : v;
@@ -548,21 +563,22 @@ canvas.addEventListener('pointerdown', e=>{
   if(S.mode!=='playing') return;
   const p = toWorld(e.clientX, e.clientY);
   if(selectedTool){
-    if(p.y < 220 || p.y > H-40 || p.x < 12 || p.x > W-12){ toast("Not there — the street, ideally."); return; }
+    if(p.y < 120){ toast("Not there — the street, ideally."); return; } // genuinely the sky
+    const px = clamp(p.x, 18, W-18), py = clamp(p.y, 228, 702); // nudge stray taps onto the street
     const def = TOOL_DEFS[selectedTool];
-    const item = { key:selectedTool, x:p.x, y:p.y, radius:def.radius, t:0, emit:0 };
+    const item = { key:selectedTool, x:px, y:py, radius:def.radius, t:0, emit:0 };
     if(selectedTool==='cart') item.stock = level.cartStock;
     placed.push(item);
     toolStock[selectedTool]--;
     sfx.place();
-    burst(p.x, p.y, 10, '#ffffff', 60);
+    burst(px, py, 10, '#ffffff', 60);
     if(toolStock[selectedTool]<=0) selectedTool=null;
     el.hint.classList.toggle('show', !!selectedTool);
     hoverPos=null; refreshToolbar();
     return;
   }
   // fan a walker
-  let best=null, bd=32*32;
+  let best=null, bd=42*42;
   for(const w of walkers){
     if(w.state!=='walk') continue;
     const pos = path.at(w.d);
