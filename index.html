@@ -115,6 +115,16 @@
     padding:8px 16px; border-radius:999px; opacity:0; transition:opacity .25s;
   }
   #hint.show{ opacity:1; }
+  #openBtn{
+    position:fixed; left:50%; transform:translateX(-50%); z-index:6;
+    bottom:calc(104px + env(safe-area-inset-bottom));
+    font-size:17px; padding:14px 30px;
+  }
+  #openBtn:disabled{
+    background:rgba(90,58,74,.45); color:rgba(255,246,232,.8); cursor:default;
+    box-shadow:0 3px 0 rgba(0,0,0,.12);
+  }
+  #ffBtn.on{ background:var(--ink); color:var(--cream); }
 
   /* ---------- toasts ---------- */
   #toasts{
@@ -159,10 +169,13 @@
     <span id="temp">🌡<b id="tempv">98</b>°F</span>
   </div>
   <div class="right">
+    <button class="iconbtn hidden" id="ffBtn">⏩</button>
     <button class="iconbtn" id="muteBtn">🔊</button>
     <button class="iconbtn" id="retryBtn">↻</button>
   </div>
 </div>
+
+<button class="btn hidden" id="openBtn">🧩 CONNECT THE PATH</button>
 
 <div id="hint"></div>
 <div id="toasts"></div>
@@ -294,6 +307,8 @@ const sfx = {
   pop(){ tone(500,0.07,'square',0.10,900); },
   win(){ [523,659,784,1047].forEach((f,i)=>tone(f,0.22,'sine',0.14,null,i*0.11)); },
   lose(){ [392,330,262].forEach((f,i)=>tone(f,0.3,'sine',0.12,null,i*0.18)); },
+  rotate(){ tone(150,0.12,'square',0.10,80); tone(95,0.10,'square',0.08,null,0.10); },
+  buzz(){ tone(110,0.2,'sawtooth',0.07,70); },
 };
 
 /* ---------------- leaderboard (Supabase) ----------------
@@ -303,7 +318,7 @@ const sfx = {
    by RLS on the table (see supabase/leaderboard.sql).       */
 const LB = {
   url: 'https://amyxocqdfcaeieerqllv.supabase.co',
-  key: '',   // Supabase anon/publishable key goes here
+  key: 'sb_publishable_uvng-9IdwolvuiCG9pQTIQ_1gyaKOVH', // publishable — safe in client, writes RLS-gated
   table: 'heatwave_scores',
 };
 const lbHeaders = () => {
@@ -333,6 +348,7 @@ const TAGLINES = [
   "Somebody scheduled an offsite. In July. Outside.",
   "The forecast: hot, with a chance of quarterly melting.",
   "The pool is open. The org chart is not ready.",
+  "Now with 40% more skybridge.",
 ];
 const NAMES = [
   "Gary from Accounting","Deb from Legal","Chad from Synergy","Priya from Product",
@@ -364,25 +380,46 @@ const HAIR = ['#3B2B27','#5A4632','#141414','#8A6A4F','#B9B0A6','#7A3B2E','#D8A2
 const SHIRT = ['#8FB8DE','#A7D8C9','#E7C6E0','#F0E2B6','#B8C4E8','#D8E8B8','#F3C5B4','#CBE5F0'];
 const PANTS = ['#5A5F73','#7A6A5A','#4A566A','#6B5B6E','#8A8578'];
 
+/* ---------------- level palettes (one world per level) ---------------- */
+const PALETTES = [
+  { skyTop:'#FFD9A0', skyMid:'#FFB48E', skyBot:'#F9A18B', g1:'#F2BC84', g2:'#E2A472', sil:'rgba(214,126,110,.5)' }, // dawn
+  { skyTop:'#FFE9A8', skyMid:'#FFC97E', skyBot:'#FFAD72', g1:'#F5B36E', g2:'#E29A58', sil:'rgba(226,140,96,.55)' }, // high noon
+  { skyTop:'#FFC98F', skyMid:'#FF9E7A', skyBot:'#EE8A86', g1:'#EFAF7C', g2:'#D89568', sil:'rgba(205,115,105,.5)' }, // golden hour
+  { skyTop:'#FFB27E', skyMid:'#FF8E6E', skyBot:'#E97C74', g1:'#E8A46E', g2:'#CE8756', sil:'rgba(190,100,90,.55)' }, // furnace haze
+  { skyTop:'#E8A2B8', skyMid:'#C687C4', skyBot:'#9F7AD1', g1:'#C89AA0', g2:'#A87F92', sil:'rgba(120,80,130,.5)' },  // hot dusk
+  { skyTop:'#FF9A66', skyMid:'#F0705C', skyBot:'#C85560', g1:'#D98A60', g2:'#B36A4C', sil:'rgba(150,60,60,.6)' },   // heat dome
+];
+
 /* ---------------- path helpers ---------------- */
 function catmullRom(ctrl, seg=22){
   const P = [ctrl[0], ...ctrl, ctrl[ctrl.length-1]];
   const out = [];
+  const cr = (a,b,c,d,t)=>{ const t2=t*t, t3=t2*t;
+    return 0.5*((2*b)+(-a+c)*t+(2*a-5*b+4*c-d)*t2+(-a+3*b-3*c+d)*t3); };
   for(let i=1;i<P.length-2;i++){
     const p0=P[i-1], p1=P[i], p2=P[i+1], p3=P[i+2];
     for(let j=0;j<seg;j++){
-      const t=j/seg, t2=t*t, t3=t2*t;
+      const t=j/seg;
       out.push({
-        x: 0.5*((2*p1.x)+(-p0.x+p2.x)*t+(2*p0.x-5*p1.x+4*p2.x-p3.x)*t2+(-p0.x+3*p1.x-3*p2.x+p3.x)*t3),
-        y: 0.5*((2*p1.y)+(-p0.y+p2.y)*t+(2*p0.y-5*p1.y+4*p2.y-p3.y)*t2+(-p0.y+3*p1.y-3*p2.y+p3.y)*t3),
+        x: cr(p0.x,p1.x,p2.x,p3.x,t),
+        y: cr(p0.y,p1.y,p2.y,p3.y,t),
+        z: Math.max(0, cr(p0.z||0,p1.z||0,p2.z||0,p3.z||0,t)),
       });
     }
   }
-  out.push({...ctrl[ctrl.length-1]});
+  out.push({ x:ctrl[ctrl.length-1].x, y:ctrl[ctrl.length-1].y, z:ctrl[ctrl.length-1].z||0 });
   return out;
 }
 function buildPath(ctrl){
   const pts = catmullRom(ctrl);
+  // per-point screen normal (perpendicular, pointing down-screen) for the wall extrusion
+  for(let i=0;i<pts.length;i++){
+    const a = pts[Math.max(i-1,0)], b = pts[Math.min(i+1,pts.length-1)];
+    const tx=b.x-a.x, ty=b.y-a.y, len=Math.hypot(tx,ty)||1;
+    let nx=-ty/len, ny=tx/len;
+    if(ny<0){ nx=-nx; ny=-ny; }
+    pts[i].nx=nx; pts[i].ny=ny;
+  }
   const cum = [0];
   for(let i=1;i<pts.length;i++)
     cum.push(cum[i-1] + Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y));
@@ -395,6 +432,7 @@ function buildPath(ctrl){
     return {
       x: lerp(pts[i-1].x, pts[i].x, t),
       y: lerp(pts[i-1].y, pts[i].y, t),
+      z: lerp(pts[i-1].z, pts[i].z, t),
       dx: (pts[i].x-pts[i-1].x),
     };
   }
@@ -408,57 +446,64 @@ const TOOL_DEFS = {
   cart:      { ico:'🍧', lbl:'PALETAS',  radius:44, desc:'emergency popsicles' },
 };
 
-/* ---------------- levels ---------------- */
+/* ---------------- levels ----------------
+   Each level is its own little world: a palette (pal), a path with
+   elevation, rotund a puzzle pieces (rotors, optionally geared to each
+   other via link), scorch zones, and a walker mix.                    */
 const LEVELS = [
-  { name:"Casual Friday", temp:98,
-    brief:"It’s 98°F and the office pool pass finally cleared legal. Get <b>5</b> coworkers to the water. Tap a tool, then tap the street. Tap a person to fan them — they love that.",
+  { name:"Casual Friday", temp:98, pal:0,
+    brief:"It’s 98°F and the office pool pass finally cleared legal. Get <b>5</b> coworkers to the water. Place your gear, open the doors, and tap people to fan them — they love that.",
     heat:8.5, count:8, quota:5, interval:2.3, speed:46,
     tools:{ umbrella:2, sprinkler:1, cart:1 }, cartStock:4,
-    ctrl:[{x:88,y:268},{x:200,y:300},{x:298,y:362},{x:274,y:468},{x:170,y:530},{x:206,y:622},{x:330,y:656}] },
-  { name:"The Long Lunch", temp:101,
-    brief:"Someone booked the taco place <i>across town</i>. The sidewalk is technically lava-adjacent. <b>6</b> must survive.",
-    heat:10, count:9, quota:6, interval:2.1, speed:46,
+    ctrl:[{x:88,y:268,z:0},{x:200,y:300,z:14},{x:298,y:362,z:40},{x:274,y:468,z:52},{x:170,y:530,z:30},{x:206,y:622,z:10},{x:330,y:656,z:0}] },
+  { name:"The Long Lunch", temp:101, pal:1,
+    brief:"High noon. The <b>Regional VP</b> (gold tie, worth 3) is coming, and so are the lunchtime joggers — fast, but they cook quicker. <b>6</b> points to clock out.",
+    heat:10, count:9, quota:6, interval:2.1, speed:46, mix:{ jogger:0.25, vip:true },
     tools:{ umbrella:2, sprinkler:1, cart:1 }, cartStock:5,
-    ctrl:[{x:80,y:262},{x:300,y:300},{x:120,y:392},{x:308,y:470},{x:130,y:556},{x:322,y:648}] },
-  { name:"Synergy Crossing", temp:103,
-    brief:"Mandatory team-building walk. The team is building resentment. Save <b>7</b> before they pivot to liquid.",
-    heat:11, count:10, quota:7, interval:1.9, speed:45,
+    ctrl:[{x:80,y:262,z:0},{x:300,y:300,z:28},{x:120,y:392,z:52},{x:308,y:470,z:40},{x:130,y:556,z:18},{x:322,y:648,z:0}] },
+  { name:"Synergy Crossing", temp:103, pal:2,
+    brief:"The path is broken — spin the <b>rotunda</b> until it connects, THEN open the doors. Save <b>7</b>.",
+    heat:11, count:10, quota:7, interval:1.9, speed:45, mix:{ jogger:0.2 },
     tools:{ umbrella:3, sprinkler:1, cart:1 }, cartStock:5,
-    ctrl:[{x:210,y:258},{x:330,y:330},{x:296,y:452},{x:158,y:430},{x:118,y:552},{x:250,y:592},{x:332,y:662}] },
-  { name:"Q3 Sizzle", temp:105,
-    brief:"Leadership says “heat is a mindset.” Leadership is on a boat. <b>7</b> of <b>11</b> must reach the water.",
-    heat:12, count:11, quota:7, interval:1.8, speed:44,
+    rotors:[{at:0.52, r:50}],
+    ctrl:[{x:210,y:258,z:0},{x:330,y:330,z:22},{x:296,y:452,z:50},{x:158,y:430,z:62},{x:118,y:552,z:34},{x:250,y:592,z:12},{x:332,y:662,z:0}] },
+  { name:"Q3 Sizzle", temp:105, pal:3,
+    brief:"Two rotundas, and they’re <b>geared together</b> — spinning one spins the other. Also: the glowing asphalt is exactly as bad as it looks. <b>7</b> of <b>11</b>.",
+    heat:12, count:11, quota:7, interval:1.8, speed:44, mix:{ jogger:0.25, vip:true },
     tools:{ umbrella:2, sprinkler:2, cart:1 }, cartStock:6,
-    ctrl:[{x:84,y:256},{x:320,y:288},{x:336,y:382},{x:104,y:368},{x:88,y:478},{x:322,y:462},{x:330,y:566},{x:128,y:552},{x:170,y:648},{x:330,y:668}] },
-  { name:"The Asphalt Gauntlet", temp:108,
-    brief:"Facilities “ran out” of umbrellas. The vending machine only sells soup. Deliver <b>8</b> souls.",
-    heat:13, count:12, quota:8, interval:1.7, speed:44,
+    rotors:[{at:0.28, r:44, link:1},{at:0.62, r:44, link:0}], scorch:[0.46],
+    ctrl:[{x:84,y:256,z:0},{x:320,y:288,z:16},{x:336,y:382,z:42},{x:104,y:368,z:56},{x:88,y:478,z:40},{x:322,y:462,z:56},{x:330,y:566,z:34},{x:128,y:552,z:46},{x:170,y:648,z:14},{x:330,y:668,z:0}] },
+  { name:"The Asphalt Gauntlet", temp:108, pal:4,
+    brief:"Dusk. Still 108°F. Three geared rotundas and one umbrella, because Facilities “ran out.” Deliver <b>8</b> souls.",
+    heat:13, count:12, quota:8, interval:1.7, speed:44, mix:{ jogger:0.3, vip:true },
     tools:{ umbrella:1, sprinkler:2, cart:1 }, cartStock:7,
-    ctrl:[{x:92,y:262},{x:180,y:336},{x:262,y:406},{x:318,y:486},{x:212,y:562},{x:318,y:652}] },
-  { name:"Heat Dome Friday", temp:112,
-    brief:"The heat dome has an agenda and it’s not hybrid-friendly. This is the big one: <b>9</b> must make it. Godspeed, and remember — fan liberally.",
-    heat:14.5, count:13, quota:9, interval:1.6, speed:43,
+    rotors:[{at:0.24, r:42, link:1},{at:0.5, r:42, link:2},{at:0.76, r:42, link:0}], scorch:[0.38],
+    ctrl:[{x:92,y:262,z:0},{x:180,y:336,z:26},{x:262,y:406,z:52},{x:318,y:486,z:36},{x:212,y:562,z:14},{x:318,y:652,z:0}] },
+  { name:"Heat Dome Friday", temp:112, pal:5,
+    brief:"The heat dome has an agenda and it’s not hybrid-friendly. Geared rotundas, scorching asphalt, <b>9</b> must make it. Godspeed — fan liberally.",
+    heat:14.5, count:13, quota:9, interval:1.6, speed:43, mix:{ jogger:0.3, vip:true },
     tools:{ umbrella:2, sprinkler:2, cart:2 }, cartStock:6,
-    ctrl:[{x:80,y:256},{x:310,y:284},{x:330,y:376},{x:96,y:360},{x:84,y:470},{x:316,y:452},{x:328,y:558},{x:120,y:544},{x:158,y:646},{x:328,y:670}] },
+    rotors:[{at:0.26, r:44, link:1},{at:0.52, r:44, link:2},{at:0.78, r:44, link:0}], scorch:[0.40, 0.66],
+    ctrl:[{x:80,y:256,z:0},{x:310,y:284,z:20},{x:330,y:376,z:46},{x:96,y:360,z:62},{x:84,y:470,z:44},{x:316,y:452,z:60},{x:328,y:558,z:40},{x:120,y:544,z:50},{x:158,y:646,z:18},{x:328,y:670,z:0}] },
 ];
 function endlessLevel(n){ // n = 1,2,3...
   const base = LEVELS[(n+2) % LEVELS.length];
   return {
-    name:`Infinite Summer · Day ${n}`, temp:112+n,
+    name:`Infinite Summer · Day ${n}`, temp:112+n, pal:(n+5)%PALETTES.length,
     brief:`Day ${n} of the heat dome. The office thermostat is a rumor. Save <b>${8+Math.min(n,6)}</b> believers.`,
     heat:14.5+n*0.9, count:13+Math.min(n,8), quota:8+Math.min(n,6),
-    interval:Math.max(1.1,1.6-n*0.05), speed:43,
+    interval:Math.max(1.1,1.6-n*0.05), speed:43, mix:{ jogger:0.3, vip:true },
     tools:{ umbrella:2, sprinkler:2, cart:2 }, cartStock:6+Math.min(n,4),
-    ctrl:base.ctrl, endless:true,
+    ctrl:base.ctrl, rotors:base.rotors, scorch:base.scorch, endless:true,
   };
 }
 
 /* ---------------- game state ---------------- */
-const S = { mode:'title' };  // title | intro | playing | done
+const S = { mode:'title' };  // title | intro | plan | playing | done
 let levelIndex = 0, endlessDay = 0;
 let level=null, path=null;
-let walkers=[], placed=[], particles=[], puddles=[], usedNames=[];
-let toolStock={}, selectedTool=null, hoverPos=null;
+let walkers=[], placed=[], particles=[], puddles=[], usedNames=[], rotors=[], scorchZones=[];
+let toolStock={}, selectedTool=null, hoverPos=null, timeScale=1;
 let spawned=0, savedCount=0, meltedCount=0, spawnTimer=0, endTimer=-1, playT=0;
 let meltJokes=[], endlessChilled=0, lastRun=null;
 
@@ -469,7 +514,7 @@ const $ = s => document.querySelector(s);
 const el = {
   title:$('#title'), tagline:$('#tagline'), playBtn:$('#playBtn'), resetBtn:$('#resetBtn'),
   hud:$('#hud'), saved:$('#saved'), quota:$('#quota'), melted:$('#melted'), tempv:$('#tempv'),
-  muteBtn:$('#muteBtn'), retryBtn:$('#retryBtn'),
+  muteBtn:$('#muteBtn'), retryBtn:$('#retryBtn'), ffBtn:$('#ffBtn'), openBtn:$('#openBtn'),
   toolbar:$('#toolbar'), hint:$('#hint'), toasts:$('#toasts'),
   introModal:$('#introModal'), introKicker:$('#introKicker'), introName:$('#introName'),
   introBrief:$('#introBrief'), introTools:$('#introTools'), goBtn:$('#goBtn'),
@@ -530,15 +575,25 @@ function freshName(){
   usedNames.push(n); return n;
 }
 function spawnWalker(){
-  walkers.push({
+  const isVip = !!level.mix?.vip && spawned === Math.floor(level.count/2);
+  const isJog = !isVip && Math.random() < (level.mix?.jogger || 0);
+  const w = {
     d: 0, heat: 0, state:'walk', t:0,
-    speed: level.speed * rand(0.88, 1.14),
-    name: freshName(),
-    skin: pick(SKIN), hair: pick(HAIR), shirt: pick(SHIRT), pants: pick(PANTS),
+    type: isVip ? 'vip' : isJog ? 'jogger' : 'reg',
+    speed: level.speed * (isVip ? 0.72 : isJog ? 1.6 : rand(0.88, 1.14)),
+    heatMul: isJog ? 1.4 : 1,
+    worth: isVip ? 3 : 1,
+    name: isVip ? 'The Regional VP' : freshName(),
+    skin: pick(SKIN), hair: pick(HAIR),
+    shirt: isVip ? '#F7F3EA' : isJog ? pick(['#FF8FAF','#8FE0C8','#FFD66B','#9AD6F0']) : pick(SHIRT),
+    pants: isJog ? '#4A566A' : pick(PANTS),
     tieHue: rand(0,360), phase: rand(0,TAU), fanCd: 0, popT: 0,
-    hasBag: Math.random()<0.7, glasses: Math.random()<0.3,
-  });
+    hasBag: isVip ? true : isJog ? false : Math.random()<0.7,
+    glasses: isVip ? true : Math.random()<0.3,
+  };
+  walkers.push(w);
   spawned++;
+  if(isVip) toast('👔 The Regional VP has entered the heat. Worth 3!', true);
 }
 
 /* ---------------- level flow ---------------- */
@@ -547,6 +602,24 @@ function startLevel(idx, endlessN=0){
   level = endlessN>0 ? endlessLevel(endlessN) : LEVELS[idx];
   path = buildPath(level.ctrl);
   walkers=[]; placed=[]; particles=[]; puddles=[]; usedNames=[]; meltJokes=[];
+  rotors = (level.rotors||[]).map(def => {
+    const d0 = def.at * path.length, r = def.r;
+    const c = path.at(d0);
+    let dIn = d0, dOut = d0; // walk outward to where the path crosses the disc edge
+    while(dIn > 0 && dist2(path.at(dIn).x, path.at(dIn).y, c.x, c.y) < r*r) dIn -= 4;
+    while(dOut < path.length && dist2(path.at(dOut).x, path.at(dOut).y, c.x, c.y) < r*r) dOut += 4;
+    const pin = path.at(dIn), pout = path.at(dOut);
+    return { x:c.x, y:c.y, z:c.z||0, r, dIn, dOut, wob:0, link:def.link,
+      base: Math.atan2(pout.y-pin.y, pout.x-pin.x), angle: 0, target: 0 };
+  });
+  if(rotors.length){
+    // scramble by applying random taps — guarantees the puzzle is solvable
+    for(let k=0; k<3+rotors.length*2; k++) tapRotor(Math.floor(Math.random()*rotors.length), true);
+    if(rotors.every(r=>rotorAligned(r))) tapRotor(0, true); // never start solved
+    rotors.forEach(r => r.angle = r.target);
+  }
+  scorchZones = (level.scorch||[]).map(f => { const p = path.at(f*path.length); return { x:p.x, y:p.y, z:p.z||0, r:34 }; });
+  timeScale = 1;
   toolStock = {...level.tools};
   selectedTool=null; hoverPos=null;
   spawned=0; savedCount=0; meltedCount=0; spawnTimer=0.8; endTimer=-1; playT=0;
@@ -567,15 +640,48 @@ function startLevel(idx, endlessN=0){
   el.introModal.classList.remove('hidden');
   el.hud.classList.remove('hidden');
   el.toolbar.classList.remove('hidden');
+  el.openBtn.classList.add('hidden');
+  el.ffBtn.classList.add('hidden');
   S.mode='intro';
 }
 function beginPlay(){
   el.introModal.classList.add('hidden');
-  S.mode='playing';
+  S.mode='plan';
   audio();
+  el.openBtn.classList.remove('hidden');
+  el.ffBtn.classList.add('hidden');
+  refreshOpenBtn();
+  if(rotors.length) toast('Spin the rotundas until the path connects 🌀', true);
+  else toast('Place your gear, then open the doors', true);
+}
+function rotorAligned(r){
+  if(Math.abs(r.target - r.angle) > 0.05) return false; // still turning
+  const m = ((r.angle % Math.PI) + Math.PI) % Math.PI;
+  return m < 0.1 || m > Math.PI - 0.1;
+}
+const pathConnected = () => rotors.every(r => rotorAligned(r));
+function tapRotor(i, silent=false){
+  const r = rotors[i];
+  r.target += Math.PI/2;
+  if(r.link != null && rotors[r.link]) rotors[r.link].target += Math.PI/2;
+  if(!silent) sfx.rotate();
+}
+function refreshOpenBtn(){
+  const ok = pathConnected();
+  el.openBtn.disabled = !ok;
+  el.openBtn.textContent = ok ? '🚪 OPEN THE DOORS' : '🧩 CONNECT THE PATH';
+}
+function openDoors(){
+  if(!pathConnected() || S.mode!=='plan') return;
+  S.mode='playing';
+  el.openBtn.classList.add('hidden');
+  el.ffBtn.classList.remove('hidden');
+  timeScale = 1; el.ffBtn.textContent = '⏩';
+  sfx.win();
 }
 function finishLevel(){
   S.mode='done';
+  el.ffBtn.classList.add('hidden');
   const total = level.count;
   const win = savedCount >= level.quota;
   const stars = savedCount>=total ? 3 : (savedCount >= level.quota + Math.ceil((total-level.quota)/2) ? 2 : (win?1:0));
@@ -618,7 +724,13 @@ function finishLevel(){
 el.playBtn.addEventListener('click', ()=>{ audio(); startLevel(Math.min(unlocked, LEVELS.length-1)); });
 el.resetBtn.addEventListener('click', ()=>{ unlocked=0; localStorage.removeItem('bth_unlocked'); el.resetBtn.classList.add('hidden'); toast('Progress melted away.'); });
 el.goBtn.addEventListener('click', beginPlay);
-el.retryBtn.addEventListener('click', ()=>{ if(S.mode==='playing'||S.mode==='done') startLevel(levelIndex, endlessDay); });
+el.retryBtn.addEventListener('click', ()=>{ if(S.mode==='playing'||S.mode==='plan'||S.mode==='done') startLevel(levelIndex, endlessDay); });
+el.openBtn.addEventListener('click', openDoors);
+el.ffBtn.addEventListener('click', ()=>{
+  timeScale = timeScale === 1 ? 3 : 1;
+  el.ffBtn.textContent = timeScale === 1 ? '⏩' : '▶️';
+  el.ffBtn.classList.toggle('on', timeScale !== 1);
+});
 el.muteBtn.addEventListener('click', ()=>{
   muted=!muted; localStorage.setItem('bth_muted', muted?'1':'0');
   el.muteBtn.textContent = muted?'🔇':'🔊';
@@ -676,10 +788,10 @@ el.resMenuBtn.addEventListener('click', ()=>{
 
 /* ---------------- input ---------------- */
 canvas.addEventListener('pointermove', e=>{
-  if(S.mode==='playing' && selectedTool) hoverPos = toWorld(e.clientX, e.clientY);
+  if((S.mode==='playing'||S.mode==='plan') && selectedTool) hoverPos = toWorld(e.clientX, e.clientY);
 });
 canvas.addEventListener('pointerdown', e=>{
-  if(S.mode!=='playing') return;
+  if(S.mode!=='playing' && S.mode!=='plan') return;
   const p = toWorld(e.clientX, e.clientY);
   if(selectedTool){
     if(p.y < 120){ toast("Not there — the street, ideally."); return; } // genuinely the sky
@@ -696,19 +808,34 @@ canvas.addEventListener('pointerdown', e=>{
     hoverPos=null; refreshToolbar();
     return;
   }
+  // spin a rotunda
+  for(let i=0;i<rotors.length;i++){
+    const r = rotors[i];
+    if(dist2(p.x, p.y, r.x, r.y - r.z) >= (r.r+10)*(r.r+10)) continue;
+    const occupied = walkers.some(w => w.state==='walk' && w.d > r.dIn - 4 && w.d < r.dOut + 4);
+    if(occupied){
+      r.wob = 1; sfx.buzz();
+      toast("There are PEOPLE on that.");
+    } else {
+      tapRotor(i);
+      if(r.link != null) rotors[r.link].wob = 0.4; // show the gearing
+    }
+    return;
+  }
+  if(S.mode==='plan') return;
   // fan a walker
   let best=null, bd=42*42;
   for(const w of walkers){
     if(w.state!=='walk') continue;
     const pos = path.at(w.d);
-    const d2 = dist2(p.x, p.y, pos.x, pos.y-14);
+    const d2 = dist2(p.x, p.y, pos.x, pos.y-(pos.z||0)-14);
     if(d2 < bd){ bd=d2; best=w; }
   }
   if(best && best.fanCd<=0){
     best.heat = Math.max(0, best.heat - 9);
     best.fanCd = 1.1;
     const pos = path.at(best.d);
-    swirl(pos.x, pos.y-16);
+    swirl(pos.x, pos.y-(pos.z||0)-16);
     sfx.fan();
   }
 });
@@ -754,7 +881,14 @@ function updateParticles(dt){
 
 /* ---------------- simulation ---------------- */
 function update(dt){
-  if(S.mode!=='playing') return;
+  if(S.mode!=='plan' && S.mode!=='playing') return;
+  for(const r of rotors){
+    r.angle += (r.target - r.angle) * Math.min(1, dt*7);
+    r.wob = Math.max(0, r.wob - dt*2);
+  }
+  if(S.mode==='plan'){ refreshOpenBtn(); updateParticles(dt); return; }
+
+  dt *= timeScale; // ⏩
   playT += dt;
 
   if(spawned < level.count){
@@ -772,12 +906,21 @@ function update(dt){
 
   for(let i=walkers.length-1;i>=0;i--){
     const w = walkers[i];
-    w.fanCd -= dt; w.phase += dt*9;
+    w.fanCd -= dt; w.phase += dt*(w.waiting ? 2 : 9);
     if(w.state==='walk'){
-      w.d += w.speed*dt * (w.popT>0 ? 1.06 : 1);
+      let nd = w.d + w.speed*dt * (w.popT>0 ? 1.06 : 1);
+      w.waiting = false;
+      for(const r of rotors){
+        if(!rotorAligned(r) && w.d < r.dIn - 2 && nd >= r.dIn - 2){
+          nd = r.dIn - 2; w.waiting = true; break; // queue at the gap, in the sun, furious
+        }
+      }
+      w.d = nd;
       const pos = path.at(w.d);
       // environment
-      let factor = 1, cool = 0;
+      let factor = 1, cool = 0, scorchMul = 1;
+      for(const zc of scorchZones)
+        if(dist2(pos.x, pos.y, zc.x, zc.y) < zc.r*zc.r) scorchMul = 2;
       for(const item of placed){
         const d2v = dist2(pos.x,pos.y,item.x,item.y);
         if(d2v > item.radius*item.radius) continue;
@@ -790,9 +933,9 @@ function update(dt){
         }
       }
       if(w.popT>0){ factor *= 0.45; w.popT -= dt; }
-      w.heat += (level.heat*factor - cool) * dt;
+      w.heat += (level.heat*factor*scorchMul*(w.heatMul||1) - cool) * dt;
       w.heat = clamp(w.heat, 0, 100);
-      if(w.heat > 55 && Math.random() < dt*(w.heat/22)) sweatDrop(pos.x, pos.y-24);
+      if(w.heat > 55 && Math.random() < dt*(w.heat/22)) sweatDrop(pos.x, pos.y-(pos.z||0)-24);
       if(w.heat >= 100){
         w.state='melt'; w.t=0;
         sfx.melt();
@@ -805,17 +948,18 @@ function update(dt){
     } else if(w.state==='enter'){
       w.t += dt;
       if(w.t >= 0.55){
-        savedCount++; el.saved.textContent = savedCount;
+        savedCount += w.worth || 1; el.saved.textContent = savedCount;
         sfx.save();
         splash(path.end.x, path.end.y+6);
-        if(Math.random()<0.28) toast(pick(SAVE_LINES).replace('%s', w.name), true);
+        if(w.type==='vip') toast(`${w.name} made it! Worth 3. Bonuses for everyone (no).`, true);
+        else if(Math.random()<0.28) toast(pick(SAVE_LINES).replace('%s', w.name), true);
         walkers.splice(i,1);
       }
     } else if(w.state==='melt'){
       w.t += dt/1.15;
       if(w.t>=1){
         const pos = path.at(w.d);
-        puddles.push({x:pos.x, y:pos.y, color:w.shirt, tieHue:w.tieHue, hasBag:w.hasBag, r:rand(15,19), wob:rand(0,TAU)});
+        puddles.push({x:pos.x, y:pos.y-(pos.z||0), color:w.shirt, tieHue:w.tieHue, hasBag:w.hasBag, r:rand(15,19), wob:rand(0,TAU)});
         meltedCount++; el.melted.textContent = meltedCount;
         walkers.splice(i,1);
       }
@@ -838,15 +982,16 @@ function roundRect(x,y,w,h,r){
 }
 
 function drawBackground(t){
+  const pal = (level && PALETTES[level.pal]) || PALETTES[2];
   // screen-space sky + ground so letterboxing looks intentional
   ctx.setTransform(dpr,0,0,dpr,0,0);
   const cw = canvas.width/dpr, ch = canvas.height/dpr;
   const horizon = offY + 208*scale;
   const sky = ctx.createLinearGradient(0,0,0,horizon);
-  sky.addColorStop(0,'#FFC98F'); sky.addColorStop(0.6,'#FFA98E'); sky.addColorStop(1,'#F99A88');
+  sky.addColorStop(0,pal.skyTop); sky.addColorStop(0.6,pal.skyMid); sky.addColorStop(1,pal.skyBot);
   ctx.fillStyle = sky; ctx.fillRect(0,0,cw,horizon);
   const gnd = ctx.createLinearGradient(0,horizon,0,ch);
-  gnd.addColorStop(0,'#F2B47E'); gnd.addColorStop(1,'#E09E6F');
+  gnd.addColorStop(0,pal.g1); gnd.addColorStop(1,pal.g2);
   ctx.fillStyle = gnd; ctx.fillRect(0,horizon,cw,ch-horizon);
 
   // world space
@@ -864,7 +1009,7 @@ function drawBackground(t){
   ctx.beginPath(); ctx.arc(sx-10,sy-11,9,0,TAU); ctx.fill();
 
   // distant skyline silhouettes
-  ctx.fillStyle = 'rgba(214,126,110,.5)';
+  ctx.fillStyle = pal.sil;
   for(const [bx,bw,bh] of [[6,42,64],[52,30,40],[150,38,52],[196,26,34],[250,40,46],[372,40,58]]){
     ctx.fillRect(bx, 208-bh, bw, bh);
     ctx.fillRect(bx+bw*0.3, 208-bh-6, bw*0.4, 6);
@@ -884,15 +1029,136 @@ function drawBackground(t){
 }
 
 function drawPathRibbon(){
-  const pts = path.pts;
+  const pts = path.pts, w = 14;
+  // rotundas own their spans of the path — the ribbon breaks around them
+  const gap = p => rotors.some(r => dist2(p.x, p.y, r.x, r.y) < (r.r-8)*(r.r-8));
+  const stroked = (fx, fy) => {
+    ctx.beginPath(); let pen = false;
+    for(const p of pts){
+      if(gap(p)){ pen = false; continue; }
+      pen ? ctx.lineTo(fx(p), fy(p)) : (ctx.moveTo(fx(p), fy(p)), pen = true);
+    }
+    ctx.stroke();
+  };
   ctx.lineCap='round'; ctx.lineJoin='round';
-  ctx.strokeStyle = 'rgba(120,70,50,.18)'; ctx.lineWidth = 34;
-  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y+3):ctx.moveTo(p.x,p.y+3)); ctx.stroke();
+  // shadow cast on the plaza below
+  ctx.strokeStyle = 'rgba(120,60,40,.20)'; ctx.lineWidth = 32;
+  stroked(p=>p.x+p.z*0.22+4, p=>p.y+4);
+  // slender support columns beneath the floating deck
+  let acc = 0;
+  for(let i=1;i<pts.length;i++){
+    const p = pts[i];
+    acc += Math.hypot(p.x-pts[i-1].x, p.y-pts[i-1].y);
+    if(acc < 85 || p.z < 26 || gap(p)) continue;
+    acc = 0;
+    const top = p.y - p.z + 15, bot = p.y + 3;
+    ctx.fillStyle = 'rgba(120,60,40,.18)';
+    ctx.beginPath(); ctx.ellipse(p.x + p.z*0.22 + 3, bot+2, 9, 3.4, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#C08558'; ctx.fillRect(p.x-4.5, top, 9, bot-top);
+    ctx.fillStyle = '#A96F47'; ctx.fillRect(p.x+0.5, top, 4, bot-top);   // shaded half
+    ctx.fillStyle = '#CE9264'; ctx.fillRect(p.x-6.5, top, 13, 4);        // capital
+    ctx.fillStyle = '#B37A4E'; ctx.fillRect(p.x-6.5, bot-3, 13, 3);      // base
+  }
+  // extruded deck side — a floating slab, monument-style faceted shading
+  const deckBottom = p => Math.min(p.y + p.ny*w + 2, p.y + p.ny*w - p.z + 17);
+  for(let i=1;i<pts.length;i++){
+    const a=pts[i-1], b=pts[i];
+    if((a.z<1 && b.z<1) || gap(a) || gap(b)) continue;
+    const tx=b.x-a.x, len=Math.hypot(tx,b.y-a.y)||1;
+    const shade = 0.72 + 0.24*Math.max(0, tx/len);
+    ctx.fillStyle = ctx.strokeStyle = `rgb(${Math.round(219*shade)},${Math.round(154*shade)},${Math.round(108*shade)})`;
+    ctx.lineWidth = 1.5; // stroke seals antialiasing seams between quads
+    ctx.beginPath();
+    ctx.moveTo(a.x+a.nx*w, a.y+a.ny*w - a.z);
+    ctx.lineTo(b.x+b.nx*w, b.y+b.ny*w - b.z);
+    ctx.lineTo(b.x+b.nx*w, deckBottom(b));
+    ctx.lineTo(a.x+a.nx*w, deckBottom(a));
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // walkway top (drawn at elevation)
   ctx.strokeStyle = '#FBEED3'; ctx.lineWidth = 30;
-  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y)); ctx.stroke();
+  stroked(p=>p.x, p=>p.y-p.z);
+  // front-edge lip for definition
+  ctx.strokeStyle = 'rgba(200,140,95,.45)'; ctx.lineWidth = 2.5;
+  stroked(p=>p.x+p.nx*w, p=>p.y+p.ny*w-p.z);
+  // dashed center line
   ctx.strokeStyle = 'rgba(224,158,111,.55)'; ctx.lineWidth = 2; ctx.setLineDash([8,10]);
-  ctx.beginPath(); pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y)); ctx.stroke();
+  stroked(p=>p.x, p=>p.y-p.z);
   ctx.setLineDash([]);
+}
+
+function drawRotors(t){
+  for(const R of rotors){
+    const r = R.r, x = R.x, y = R.y - R.z;
+    const wobble = Math.sin(t*40) * R.wob * 0.06;
+    // ground shadow
+    ctx.fillStyle = 'rgba(120,60,40,.20)';
+    ctx.beginPath(); ctx.ellipse(R.x + R.z*0.22 + 4, R.y + 4, r*0.95, r*0.42, 0, 0, TAU); ctx.fill();
+    // centre column down to the plaza
+    ctx.fillStyle = '#B37A4E'; ctx.fillRect(x-8, y+r*0.3, 16, R.y - y - r*0.3 + 3);
+    ctx.fillStyle = '#A96F47'; ctx.fillRect(x+1, y+r*0.3, 7, R.y - y - r*0.3 + 3);
+    // slab side
+    ctx.fillStyle = '#C98F60';
+    ctx.beginPath(); ctx.ellipse(x, y+15, r, r*0.62, 0, 0, TAU); ctx.fill();
+    // disc top
+    ctx.fillStyle = '#EED9B7';
+    ctx.beginPath(); ctx.ellipse(x, y, r, r*0.62, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(200,140,95,.5)'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.ellipse(x, y, r, r*0.62, 0, 0, TAU); ctx.stroke();
+    // gear teeth if linked — hints that it turns a partner
+    if(R.link != null){
+      ctx.fillStyle = 'rgba(200,140,95,.65)';
+      for(let i=0;i<8;i++){
+        const a = i/8*TAU + R.angle*0.5;
+        ctx.beginPath();
+        ctx.ellipse(x+Math.cos(a)*r, y+Math.sin(a)*r*0.62, 4, 3, a, 0, TAU); ctx.fill();
+      }
+    }
+    // invite-a-tap pulse while misaligned
+    if(!rotorAligned(R)){
+      ctx.strokeStyle = `rgba(255,255,255,${0.35 + Math.sin(t*4)*0.25})`; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(x, y, r+7, (r+7)*0.62, 0, 0, TAU); ctx.stroke();
+    }
+    // rotating bridge bar, drawn in the disc's squashed space
+    const base = Math.atan2(Math.sin(R.base)/0.62, Math.cos(R.base));
+    ctx.save();
+    ctx.translate(x, y); ctx.scale(1, 0.62); ctx.rotate(base + R.angle + wobble);
+    ctx.fillStyle = '#FBEED3';
+    roundRect(-r+3, -15, 2*r-6, 30, 15); ctx.fill();
+    ctx.strokeStyle = 'rgba(224,158,111,.55)'; ctx.lineWidth = 2; ctx.setLineDash([8,10]);
+    ctx.beginPath(); ctx.moveTo(-r+10, 0); ctx.lineTo(r-10, 0); ctx.stroke(); ctx.setLineDash([]);
+    ctx.restore();
+    // pivot cap
+    ctx.fillStyle = '#D77A63';
+    ctx.beginPath(); ctx.ellipse(x, y, 7, 4.6, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.5)';
+    ctx.beginPath(); ctx.ellipse(x-1.6, y-1.2, 2.2, 1.4, 0, 0, TAU); ctx.fill();
+  }
+}
+
+function drawScorch(t){
+  for(const zc of scorchZones){
+    const y = zc.y - zc.z;
+    const pulse = 0.3 + Math.sin(t*3 + zc.x)*0.1;
+    const g = ctx.createRadialGradient(zc.x, y, 4, zc.x, y, zc.r);
+    g.addColorStop(0, `rgba(255,90,40,${pulse+0.15})`);
+    g.addColorStop(1, 'rgba(255,90,40,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.ellipse(zc.x, y, zc.r, zc.r*0.62, 0, 0, TAU); ctx.fill();
+    // cracked asphalt
+    ctx.strokeStyle = `rgba(190,50,25,${0.5+pulse*0.4})`; ctx.lineWidth = 1.8; ctx.lineCap='round';
+    for(let i=0;i<4;i++){
+      const a = i/4*TAU + 0.6;
+      ctx.beginPath();
+      ctx.moveTo(zc.x + Math.cos(a)*5, y + Math.sin(a)*3);
+      ctx.lineTo(zc.x + Math.cos(a)*16 + (i%2?4:-3), y + Math.sin(a)*10);
+      ctx.lineTo(zc.x + Math.cos(a)*24, y + Math.sin(a)*14 + (i%2?-2:2));
+      ctx.stroke();
+    }
+    // rising heat motes
+    if(Math.random() < 0.15)
+      particles.push({x:zc.x+rand(-zc.r*0.5,zc.r*0.5), y:y-4, vx:rand(-4,4), vy:rand(-34,-20), life:.7, max:.7, type:'dot', color:'rgba(255,120,60,.7)', size:rand(1.5,2.6)});
+  }
 }
 
 function drawBuilding(door, kind, t){
@@ -923,6 +1189,17 @@ function drawBuilding(door, kind, t){
     if(kind==='cool' && (r+c)%2===0){ // frosty glow
       ctx.fillStyle='rgba(255,255,255,.5)'; ctx.fillRect(wx,wy+11,14,5);
     }
+  }
+  // rooftop water tower (hot building only)
+  if(kind==='hot'){
+    const wx = x+bw-34, wb = y - depth*0.7;
+    ctx.strokeStyle='#8A5A45'; ctx.lineWidth=2.5;
+    ctx.beginPath(); ctx.moveTo(wx+5, wb-8); ctx.lineTo(wx+3, wb+1); ctx.moveTo(wx+17, wb-8); ctx.lineTo(wx+19, wb+1); ctx.stroke();
+    ctx.fillStyle='#B98A5A'; roundRect(wx+1, wb-24, 20, 16, 3); ctx.fill();
+    ctx.strokeStyle='rgba(90,50,35,.4)'; ctx.lineWidth=1.4;
+    ctx.beginPath(); ctx.moveTo(wx+2, wb-19); ctx.lineTo(wx+20, wb-19); ctx.moveTo(wx+2, wb-13); ctx.lineTo(wx+20, wb-13); ctx.stroke();
+    ctx.fillStyle='#8F5B48';
+    ctx.beginPath(); ctx.moveTo(wx-2, wb-24); ctx.lineTo(wx+24, wb-24); ctx.lineTo(wx+11, wb-34); ctx.closePath(); ctx.fill();
   }
   // door arch
   const dx = clamp(door.x, x+22, x+bw-22);
@@ -962,6 +1239,9 @@ function drawPool(end, t){
   ctx.beginPath(); ctx.ellipse(cx, cy, 72, 36, 0, 0, TAU); ctx.fill();
   ctx.fillStyle = '#5BBCDD';
   ctx.beginPath(); ctx.ellipse(cx+4, cy+4, 58, 27, 0, 0, TAU); ctx.fill();
+  // inner rim shadow — the water has depth now
+  ctx.strokeStyle = 'rgba(25,85,115,.28)'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.ellipse(cx, cy+1, 68, 33, 0, Math.PI, TAU); ctx.stroke();
   // drifting shimmer lines
   ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
   for(let i=0;i<4;i++){
@@ -1107,6 +1387,7 @@ function drawPuddle(p, t){
 
 function drawWalker(w, t){
   const pos = path.at(w.d);
+  const elev = pos.z || 0;
   const facing = pos.dx >= 0 ? 1 : -1;
   const heat = w.heat/100;
   const bob = Math.sin(w.phase)*1.6;
@@ -1122,7 +1403,7 @@ function drawWalker(w, t){
   }
 
   ctx.save();
-  ctx.translate(pos.x, pos.y - hop);
+  ctx.translate(pos.x, pos.y - elev - hop);
   ctx.globalAlpha = alpha;
 
   // shadow
@@ -1155,8 +1436,8 @@ function drawWalker(w, t){
   // body (rolled-sleeves shirt)
   ctx.fillStyle = shirtCol;
   roundRect(-7, -26+bob+meltDrop*0.3, 14, 16, 5); ctx.fill();
-  // tie (or lanyard)
-  ctx.fillStyle = `hsl(${w.tieHue} 60% 52%)`;
+  // tie (or lanyard) — the VP's is gold, obviously
+  ctx.fillStyle = w.type==='vip' ? '#F5C542' : `hsl(${w.tieHue} 60% 52%)`;
   ctx.beginPath(); ctx.moveTo(0,-25+bob); ctx.lineTo(2,-21+bob); ctx.lineTo(0,-14+bob); ctx.lineTo(-2,-21+bob); ctx.closePath(); ctx.fill();
   // arms + briefcase
   ctx.strokeStyle = skinCol; ctx.lineWidth = 3;
@@ -1183,6 +1464,10 @@ function drawWalker(w, t){
   // hair
   ctx.fillStyle = w.hair;
   ctx.beginPath(); ctx.arc(0, hy-2.4, 5.6, Math.PI*1.05, Math.PI*1.95); ctx.fill();
+  if(w.type==='jogger'){ // sweatband
+    ctx.fillStyle = '#FF5A76';
+    ctx.fillRect(-5.4, hy-4.6, 10.8, 2.6);
+  }
   // face: eyes + mouth by heat
   ctx.fillStyle = '#3A2530';
   if(heat < 0.85){
@@ -1212,9 +1497,22 @@ function drawWalker(w, t){
 
   ctx.restore();
 
+  // impatient "…" while queued at the rotunda
+  if(w.waiting && w.state==='walk'){
+    const by = pos.y - elev - 52;
+    ctx.fillStyle = 'rgba(255,246,232,.9)';
+    roundRect(pos.x-11, by-6, 22, 12, 6); ctx.fill();
+    ctx.fillStyle = '#5A3A4A';
+    for(let i=0;i<3;i++){
+      const on = Math.floor(t*2.5)%3 >= i ? 1 : 0.25;
+      ctx.globalAlpha = on;
+      ctx.beginPath(); ctx.arc(pos.x-5+i*5, by, 1.6, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
   // heat bar
   if(w.state==='walk' && w.heat>18){
-    const bw = 18, bx = pos.x-bw/2, by = pos.y-46;
+    const bw = 18, bx = pos.x-bw/2, by = pos.y-elev-46;
     ctx.fillStyle='rgba(58,32,48,.35)'; roundRect(bx-1,by-1,bw+2,4.6,2.3); ctx.fill();
     ctx.fillStyle = heat<0.5 ? '#FFD66B' : heat<0.8 ? '#FF9A5C' : '#F0503C';
     roundRect(bx,by,bw*heat,2.6,1.3); ctx.fill();
@@ -1244,6 +1542,8 @@ function render(t){
   if(!path) return;
 
   drawPathRibbon();
+  drawRotors(t);
+  drawScorch(t);
   drawPool(path.end, t);
   for(const p of puddles) drawPuddle(p, t);
   drawBuilding(path.start, 'hot', t);
@@ -1266,6 +1566,16 @@ function render(t){
 
   drawParticles();
 }
+
+/* tiny debug handle for automated tests */
+window.__bth = {
+  state: () => ({ rotors, saved: savedCount, melted: meltedCount, connected: pathConnected(), mode: S.mode, waiting: walkers.filter(w=>w.waiting).length }),
+  tap: i => tapRotor(i),
+  toScreen(wx, wy){
+    const r = canvas.getBoundingClientRect(), s = Math.min(r.width/W, r.height/H);
+    return { x: r.left + (r.width - W*s)/2 + wx*s, y: r.top + (r.height - H*s)/2 + wy*s };
+  },
+};
 
 /* ---------------- main loop ---------------- */
 let last = performance.now();
