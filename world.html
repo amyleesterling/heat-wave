@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#C9A7E8">
+<title>Beat the Heat · Tiny World 🌍</title>
+<style>
+  *{ margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; overflow:hidden; background:#2b1c2e; }
+  body{
+    font-family: ui-rounded, "SF Pro Rounded", Quicksand, "Segoe UI", system-ui, sans-serif;
+    touch-action:none; user-select:none; -webkit-user-select:none; color:#5A3A4A;
+  }
+  #c{ position:fixed; inset:0; width:100%; height:100%; display:block; }
+  .hidden{ display:none !important; }
+  #hud{
+    position:fixed; top:0; left:0; right:0; z-index:5; pointer-events:none;
+    display:flex; justify-content:space-between; align-items:center;
+    padding:calc(10px + env(safe-area-inset-top)) 14px 0;
+  }
+  .chip{
+    background:rgba(255,246,232,.9); border-radius:16px; padding:7px 13px;
+    font-weight:800; font-size:14px; box-shadow:0 3px 10px rgba(60,40,70,.25);
+    pointer-events:auto;
+  }
+  a.chip{ text-decoration:none; color:#5A3A4A; }
+  #status{
+    position:fixed; left:50%; transform:translateX(-50%); z-index:5;
+    top:calc(62px + env(safe-area-inset-top)); pointer-events:none;
+    background:rgba(90,58,74,.85); color:#FFF6E8; font-size:13.5px; font-weight:700;
+    padding:8px 18px; border-radius:999px; text-align:center; max-width:86vw;
+    transition:opacity .3s;
+  }
+  .btn{
+    border:none; cursor:pointer; font-family:inherit; font-weight:800;
+    background:#5A3A4A; color:#FFF6E8; border-radius:999px;
+    padding:15px 36px; font-size:18px; letter-spacing:.05em;
+    box-shadow:0 6px 0 rgba(0,0,0,.22); transition:transform .08s;
+    position:fixed; left:50%; transform:translateX(-50%); z-index:6;
+    bottom:calc(20px + env(safe-area-inset-bottom));
+  }
+  .btn:active{ transform:translateX(-50%) translateY(4px); box-shadow:0 2px 0 rgba(0,0,0,.22); }
+  .btn:disabled{ background:rgba(90,58,74,.45); cursor:default; box-shadow:0 3px 0 rgba(0,0,0,.12); }
+  #modal{
+    position:fixed; inset:0; z-index:10; display:flex; align-items:center; justify-content:center;
+    background:rgba(58,32,52,.45); backdrop-filter:blur(3px);
+  }
+  #modal .card{
+    background:#FFF6E8; border-radius:26px; padding:26px 24px 22px; width:min(86vw,340px);
+    text-align:center; box-shadow:0 14px 40px rgba(40,20,40,.35);
+  }
+  #modal h2{ font-size:26px; margin:4px 0 10px; }
+  #modal p{ font-size:14.5px; line-height:1.5; opacity:.85; margin-bottom:16px; }
+  #modal .kicker{ font-size:11px; font-weight:800; letter-spacing:.22em; color:#FF7B6B; text-transform:uppercase; }
+  #modal button{ position:static; transform:none; }
+  #modal button:active{ transform:translateY(4px); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <a class="chip" href="index.html">← the commute</a>
+  <div class="chip">🧊 <b id="saved">0</b>/<b id="quota">3</b> &nbsp; 🫠 <b id="melted">0</b></div>
+</div>
+<div id="status">spin the world 🌍</div>
+<button class="btn" id="goBtn" disabled>🧩 FIND THE WAY</button>
+
+<div id="modal">
+  <div class="card">
+    <div class="kicker">Prototype · Tiny World № 1</div>
+    <h2>The Liquid Oasis</h2>
+    <p><b>Drag to spin the world.</b> The path from the office door to the rooftop pool is broken… from most angles. Find the view where the walkways <i>agree</i>, open the doors, and fan your coworkers as they climb through impossible geometry.</p>
+    <button class="btn" id="startBtn">SPIN IT</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   TINY WORLD — a rotatable Escher-in-pastel prototype.
+   Orthographic block world; drag to orbit with 90° snaps.
+   Walkability is computed from SCREEN adjacency after projection
+   (the Fez/Monument Valley trick), so paths connect only when
+   the perspective says they do.
+   ============================================================ */
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let dpr=1, CW=0, CH=0;
+function resize(){
+  dpr = Math.min(devicePixelRatio||1, 2.5);
+  const r = canvas.getBoundingClientRect();
+  CW = r.width; CH = r.height;
+  canvas.width = Math.round(CW*dpr); canvas.height = Math.round(CH*dpr);
+}
+addEventListener('resize', resize); resize(); setTimeout(resize, 350);
+
+const clamp=(v,a,b)=>v<a?a:v>b?b:v, lerp=(a,b,t)=>a+(b-a)*t, TAU=Math.PI*2;
+const rand=(a,b)=>a+Math.random()*(b-a);
+
+/* ---------- tiny synth ---------- */
+let AC=null;
+function tone(f,d,type='sine',v=.14,slide=null,when=0){
+  try{ AC = AC || new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; }
+  if(AC.state==='suspended') AC.resume();
+  const t0=AC.currentTime+when, o=AC.createOscillator(), g=AC.createGain();
+  o.type=type; o.frequency.setValueAtTime(f,t0);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(slide,1),t0+d);
+  g.gain.setValueAtTime(v,t0); g.gain.exponentialRampToValueAtTime(.0001,t0+d);
+  o.connect(g).connect(AC.destination); o.start(t0); o.stop(t0+d+.05);
+}
+const sfx = {
+  snap(){ tone(300,.09,'triangle',.16); tone(450,.12,'triangle',.10,null,.05); },
+  connect(){ [523,659,784].forEach((f,i)=>tone(f,.18,'sine',.12,null,i*.09)); },
+  fan(){ tone(1200,.06,'triangle',.05,700); },
+  save(){ tone(320,.1,'sine',.16,120); tone(660,.14,'sine',.11,null,.08); tone(880,.16,'sine',.1,null,.16); },
+  melt(){ tone(280,.5,'sawtooth',.09,60); },
+  win(){ [523,659,784,1047].forEach((f,i)=>tone(f,.2,'sine',.13,null,i*.1)); },
+};
+
+/* ============================================================
+   THE WORLD — blocks on an integer grid. y is UP.
+   mats: stone (structure) · walk (path) · pool (goal) · accent
+   ============================================================ */
+const B = [];
+const add = (x,y,z,m)=>B.push({x,y,z,m});
+const col = (x,z,h,m='stone')=>{ for(let y=0;y<h;y++) add(x,y,z,m); };
+
+/* -- structure, hand-laid --
+   Lower path runs along z=4 at height y=1 (tops of y=0 blocks).
+   Upper path runs along z=0 at height y=3 (tops of y=2 columns).
+   They are physically severed. From exactly one snap view the
+   projection stitches the seam.                                 */
+// office tower (door block at west end of lower path)
+col(0,4,3,'office'); col(0,3,3,'office'); col(0,5,2,'office');
+// lower walkway z=4, tops at y=1
+for(let x=1;x<=4;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
+// upper colonnade z=0, tops at y=3
+for(let x=2;x<=5;x++){ col(x,0,3,'stone'); add(x,3,0,'walk'); }
+// L-turn of the upper deck toward the seam — from view 1 (east face),
+// its far tile projects exactly one step from the lower deck's end.
+col(5,1,3,'stone'); add(5,3,1,'walk');
+col(5,2,3,'stone'); add(5,3,2,'walk');
+// pool terrace at east end of upper path
+col(6,0,3,'stone'); col(6,1,3,'stone');
+add(6,3,0,'pool'); add(6,3,1,'pool');
+col(7,0,3,'stone'); col(7,1,3,'stone');
+add(7,3,0,'pool'); add(7,3,1,'pool');
+// decorative gardens tucked into the structure
+col(6,4,1,'accent'); add(6,1,4,'garden');
+col(2,2,2,'accent'); add(2,2,2,'garden');
+col(7,2,3,'accent'); add(7,3,2,'garden');
+
+const DOOR = {x:1, y:1, z:4};          // spawn tile (walk top coords)
+const POOLS = [{x:6,y:3,z:0},{x:6,y:3,z:1},{x:7,y:3,z:0},{x:7,y:3,z:1}];
+
+/* Walkable tops: mat walk/pool and nothing above */
+const occupied = new Set(B.map(b=>`${b.x},${b.y},${b.z}`));
+const TOPS = B.filter(b => (b.m==='walk'||b.m==='pool') && !occupied.has(`${b.x},${b.y+1},${b.z}`));
+
+/* ---------- projection ---------- */
+const TILE = 34, HGT = 34*0.5;  // screen tile radius / block height step
+let yaw = 0;                    // current continuous yaw
+let yawTarget = 0, dragging=false, spun=false;
+
+function project(x,y,z,cy=yaw){
+  // rotate around vertical axis about world centre
+  const cx0 = 3.5, cz0 = 2.5;
+  const dx = x-cx0, dz = z-cz0;
+  const rx = dx*Math.cos(cy) - dz*Math.sin(cy);
+  const rz = dx*Math.sin(cy) + dz*Math.cos(cy);
+  return {
+    sx: (rx - rz) * TILE,
+    sy: (rx + rz) * TILE*0.5 - y*HGT,
+    depth: rx + rz + y*0.001,
+  };
+}
+const SNAPS = [0,1,2,3].map(k=>k*Math.PI/2); // four faces of the world
+const snapIndex = a => {
+  let best=0, bd=1e9;
+  for(let i=0;i<4;i++){ const d=Math.abs(Math.atan2(Math.sin(a-SNAPS[i]),Math.cos(a-SNAPS[i]))); if(d<bd){bd=d;best=i;} }
+  return best;
+};
+
+/* ---------- screen-space walk graph (the Escher rule) ----------
+   At a snapped view, quantize each top tile to integer (u,v).
+   Front-most tile wins each screen cell. Tiles connect if their
+   (u,v) differ by exactly one walk-step: (±1,±1).                */
+function graphAt(idx){
+  const a = SNAPS[idx];
+  const cells = new Map();
+  for(const t of TOPS){
+    const p = project(t.x, t.y+1, t.z, a); // top surface
+    const u = Math.round(p.sx / TILE), v = Math.round(p.sy / (TILE*0.5));
+    const key = u+','+v;
+    const prev = cells.get(key);
+    if(!prev || p.depth > prev.depth) cells.set(key, {t, u, v, depth:p.depth});
+  }
+  const nodes = [...cells.values()];
+  const byUV = new Map(nodes.map(n=>[n.u+','+n.v, n]));
+  const edges = new Map(nodes.map(n=>[keyOf(n.t), []]));
+  for(const n of nodes){
+    for(const [du,dv] of [[1,1],[1,-1],[-1,1],[-1,-1]]){
+      const m = byUV.get((n.u+du)+','+(n.v+dv));
+      if(m) edges.get(keyOf(n.t)).push(m.t);
+    }
+  }
+  return { edges, visible:new Set(nodes.map(n=>keyOf(n.t))) };
+}
+const keyOf = t => `${t.x},${t.y},${t.z}`;
+
+function findPath(idx){
+  const g = graphAt(idx);
+  if(!g.visible.has(keyOf(DOOR))) return null;
+  const goal = new Set(POOLS.map(keyOf));
+  const q=[DOOR], prev=new Map([[keyOf(DOOR),null]]);
+  while(q.length){
+    const cur=q.shift();
+    if(goal.has(keyOf(cur))){
+      const path=[cur]; let k=prev.get(keyOf(cur));
+      while(k){ path.unshift(k); k=prev.get(keyOf(k)); }
+      return path;
+    }
+    for(const nb of (g.edges.get(keyOf(cur))||[])){
+      if(prev.has(keyOf(nb))) continue;
+      prev.set(keyOf(nb), cur); q.push(nb);
+    }
+  }
+  return null;
+}
+
+/* ---------- state ---------- */
+const $ = s=>document.querySelector(s);
+const el = { saved:$('#saved'), melted:$('#melted'), quota:$('#quota'), status:$('#status'),
+             goBtn:$('#goBtn'), modal:$('#modal'), startBtn:$('#startBtn') };
+let mode='spin';            // spin | walk | done
+let walkers=[], savedCount=0, meltedCount=0, spawnT=0, spawnedN=0, particles=[];
+const QUOTA=3, COUNT=5, HEAT_RATE=13; // unfanned slowpokes will melt a step from the water
+let currentPath=null;
+
+function setStatus(msg){ el.status.textContent = msg; }
+function refreshGate(){
+  if(mode!=='spin') return;
+  const idx = snapIndex(yawTarget);
+  currentPath = findPath(idx);
+  el.goBtn.disabled = !currentPath;
+  el.goBtn.textContent = currentPath ? '🚪 OPEN THE DOORS' : '🧩 FIND THE WAY';
+  if(currentPath){ setStatus('the walkways agree ✨'); }
+  else setStatus(spun ? 'not from this angle…' : 'spin the world 🌍');
+}
+
+el.startBtn.addEventListener('click', ()=>{ el.modal.classList.add('hidden'); tone(500,.1,'triangle',.12); });
+el.goBtn.addEventListener('click', ()=>{
+  if(!currentPath || mode!=='spin') return;
+  mode='walk'; el.goBtn.classList.add('hidden');
+  setStatus('fan them! tap a climber 🌬');
+  sfx.connect();
+});
+
+/* ---------- input: drag to orbit, tap to fan ---------- */
+let px0=0, py0=0, yaw0=0, moved=0;
+canvas.addEventListener('pointerdown', e=>{
+  dragging=true; moved=0; px0=e.clientX; py0=e.clientY; yaw0=yaw;
+});
+canvas.addEventListener('pointermove', e=>{
+  if(!dragging) return;
+  const dx = e.clientX-px0;
+  moved = Math.max(moved, Math.abs(dx), Math.abs(e.clientY-py0));
+  yaw = yaw0 + dx*0.012;
+  spun = spun || moved>30;
+});
+addEventListener('pointerup', e=>{
+  if(!dragging) return;
+  dragging=false;
+  if(moved < 8){ tapAt(e.clientX, e.clientY); }
+  const idx = snapIndex(yaw);
+  yawTarget = SNAPS[idx] + Math.round((yaw - SNAPS[idx])/TAU)*TAU;
+  sfx.snap();
+  refreshGate();
+});
+
+function tapAt(cx, cy){
+  if(mode!=='walk') return;
+  const wx = (cx - CW/2), wy = (cy - CH*0.46);
+  let best=null, bd=42*42;
+  for(const w of walkers){
+    if(w.state!=='walk') continue;
+    const p = walkerScreen(w);
+    const d2 = (p.sx-wx)**2 + (p.sy-18-wy)**2;
+    if(d2<bd){ bd=d2; best=w; }
+  }
+  if(best && best.fanCd<=0){
+    best.heat = Math.max(0, best.heat-16);
+    best.fanCd = 1.0;
+    sfx.fan();
+    const p = walkerScreen(best);
+    for(let i=0;i<8;i++){ const a=i/8*TAU;
+      particles.push({sx:p.sx+Math.cos(a)*12, sy:p.sy-16+Math.sin(a)*8, vx:Math.cos(a+1.6)*50, vy:Math.sin(a+1.6)*34-10, life:.5, max:.5, color:'#DFF3FF', size:2.6});
+    }
+  }
+}
+
+/* ---------- walkers ---------- */
+const SKIN=['#F6C9A0','#E8B48A','#C68B59','#8D5A3A'], SHIRT=['#8FB8DE','#A7D8C9','#E7C6E0','#F0E2B6','#B8C4E8'];
+function spawnWalker(){
+  walkers.push({ i:0, t:0, state:'walk', heat:0, fanCd:0,
+    speed:rand(.75,1.0), phase:rand(0,TAU),
+    skin:SKIN[Math.floor(Math.random()*SKIN.length)],
+    shirt:SHIRT[Math.floor(Math.random()*SHIRT.length)],
+    tieHue:rand(0,360) });
+  spawnedN++;
+}
+function walkerScreen(w){
+  const path = currentPath;
+  const a = path[Math.min(w.i, path.length-1)];
+  const b = path[Math.min(w.i+1, path.length-1)];
+  const pa = project(a.x+0, a.y+1, a.z, yaw), pb = project(b.x, b.y+1, b.z, yaw);
+  return { sx:lerp(pa.sx,pb.sx,w.t), sy:lerp(pa.sy,pb.sy,w.t), depth:lerp(pa.depth,pb.depth,w.t) };
+}
+
+function update(dt){
+  if(mode!=='walk'){
+    // idle: ease yaw to target
+    if(!dragging) yaw += (yawTarget-yaw)*Math.min(1,dt*8);
+    updateParticles(dt);
+    return;
+  }
+  if(!dragging) yaw += (yawTarget-yaw)*Math.min(1,dt*8);
+  if(spawnedN < COUNT){ spawnT -= dt; if(spawnT<=0){ spawnWalker(); spawnT = 1.6; } }
+  for(let i=walkers.length-1;i>=0;i--){
+    const w = walkers[i];
+    w.fanCd -= dt; w.phase += dt*9;
+    if(w.state!=='walk') continue;
+    w.t += dt * w.speed * 1.1; // ~1 tile per second
+    if(w.t>=1){ w.t=0; w.i++; }
+    w.heat += HEAT_RATE*dt;
+    if(w.i >= currentPath.length-1 && w.t===0){
+      w.state='saved'; savedCount++; el.saved.textContent=savedCount;
+      sfx.save();
+      const p = walkerScreen(w);
+      for(let k=0;k<14;k++){ const a=rand(-Math.PI,0);
+        particles.push({sx:p.sx, sy:p.sy, vx:Math.cos(a)*rand(30,80), vy:Math.sin(a)*rand(40,100), life:rand(.4,.8), max:.8, color:'#BFE9F7', size:rand(2,3.5)});
+      }
+      walkers.splice(i,1);
+      continue;
+    }
+    if(w.heat>=100){
+      w.state='melted'; meltedCount++; el.melted.textContent=meltedCount;
+      sfx.melt();
+      walkers.splice(i,1);
+    }
+  }
+  updateParticles(dt);
+  if(spawnedN>=COUNT && walkers.length===0 && mode==='walk'){
+    mode='done';
+    const win = savedCount>=QUOTA;
+    setStatus(win ? `☀️ ${savedCount}/${COUNT} reached the oasis — prototype complete!` : '🫠 the oasis remains theoretical. drag to admire, refresh to retry');
+    if(win) sfx.win();
+  }
+}
+function updateParticles(dt){
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i]; p.life-=dt;
+    if(p.life<=0){ particles.splice(i,1); continue; }
+    p.vy += 140*dt; p.sx += p.vx*dt; p.sy += p.vy*dt;
+  }
+}
+
+/* ============================================================
+   RENDER — pastel void, floating island, flat-shaded blocks
+   ============================================================ */
+const MATS = {
+  stone:  { top:'#F2D8B8', left:'#DBA97E', right:'#C08558' },
+  walk:   { top:'#FDF3DC', left:'#E3BC90', right:'#CB9668' },
+  pool:   { top:'#7FD1E8', left:'#5FA8A0', right:'#4E938B' },
+  office: { top:'#E89B82', left:'#C96F5C', right:'#A85546' },
+  accent: { top:'#CBAED6', left:'#A886BC', right:'#8A6A9E' },
+  garden: { top:'#A7D8A0', left:'#7FB278', right:'#639260' },
+};
+
+function drawBlock(b, bobY){
+  const p  = project(b.x, b.y, b.z);
+  const pT = project(b.x, b.y+1, b.z);
+  const cx = CW/2, cy = CH*0.46 + bobY;
+  const x = cx + p.sx, y = cy + p.sy, xT = cx + pT.sx, yT = cy + pT.sy;
+  const m = MATS[b.m] || MATS.stone;
+  const corner = (ox,oz,y_)=>{ const q = project(b.x+ox, y_, b.z+oz); return [cx+q.sx, cy+q.sy]; };
+  const t1=corner(0,0,b.y+1), t2=corner(1,0,b.y+1), t3=corner(1,1,b.y+1), t4=corner(0,1,b.y+1);
+  const b1=corner(0,0,b.y),   b2=corner(1,0,b.y),   b3=corner(1,1,b.y),   b4=corner(0,1,b.y);
+  const poly = (pts,fill)=>{ ctx.fillStyle=fill; ctx.strokeStyle=fill; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(...pts[0]); for(let i=1;i<pts.length;i++) ctx.lineTo(...pts[i]);
+    ctx.closePath(); ctx.fill(); ctx.stroke(); };
+  // side faces: rotate each outward normal; a face is visible when it
+  // points toward the camera diagonal (+rx+rz), and it's the "right"
+  // (darker) face when its screen direction is rightward.
+  const faces = [
+    { pts:[t2,t3,b3,b2], n:[ 1, 0] },  // +x
+    { pts:[t3,t4,b4,b3], n:[ 0, 1] },  // +z
+    { pts:[t1,t2,b2,b1], n:[ 0,-1] },  // -z
+    { pts:[t4,t1,b1,b4], n:[-1, 0] },  // -x
+  ];
+  const cs = Math.cos(yaw), sn = Math.sin(yaw);
+  for(const f of faces){
+    const rxn = f.n[0]*cs - f.n[1]*sn, rzn = f.n[0]*sn + f.n[1]*cs;
+    if(rxn + rzn <= 0.02) continue;           // back-facing
+    poly(f.pts, (rxn - rzn) > 0 ? m.right : m.left);
+  }
+  // top
+  poly([t1,t2,t3,t4], m.top);
+  if(b.m==='pool'){
+    // shimmer
+    ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=1.6;
+    const mx=(t1[0]+t3[0])/2, my=(t1[1]+t3[1])/2, ph=(performance.now()/900 + b.x + b.z)%1;
+    ctx.globalAlpha = .3+.4*Math.sin(ph*Math.PI);
+    ctx.beginPath(); ctx.moveTo(mx-10, my+ (ph-0.5)*8); ctx.quadraticCurveTo(mx, my+2+(ph-.5)*8, mx+10, my+(ph-.5)*8); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  if(b.m==='garden'){
+    const mx=(t1[0]+t3[0])/2, my=(t1[1]+t3[1])/2;
+    ctx.fillStyle='#FF8FAF';
+    for(const [fx,fy] of [[-6,-2],[4,-4],[0,3]]){
+      ctx.beginPath(); ctx.arc(mx+fx, my+fy, 2.4, 0, TAU); ctx.fill();
+    }
+  }
+  // door decal on the office block adjacent to spawn
+  if(b.m==='office' && b.x===0 && b.y===0 && b.z===4){
+    // door on +x face midpoint
+    const dm = [(t2[0]+b3[0]+t3[0]+b2[0])/4, (t2[1]+b3[1]+t3[1]+b2[1])/4];
+    ctx.fillStyle='#7E4638';
+    ctx.beginPath(); ctx.ellipse(dm[0], dm[1]+3, 6.5, 9, 0, 0, TAU); ctx.fill();
+  }
+}
+
+function drawWalker(w, bobY){
+  const p = walkerScreen(w);
+  const cx = CW/2 + p.sx, cy = CH*0.46 + p.sy + bobY;
+  const heat = w.heat/100, bob = Math.sin(w.phase)*1.4;
+  ctx.save(); ctx.translate(cx, cy);
+  ctx.fillStyle='rgba(90,50,70,.3)';
+  ctx.beginPath(); ctx.ellipse(0, 2, 8, 3, 0, 0, TAU); ctx.fill();
+  // legs
+  const lp=Math.sin(w.phase);
+  ctx.strokeStyle='#5A5F73'; ctx.lineWidth=3.4; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-2,-10+bob*.3); ctx.lineTo(-2+lp*3.4, 0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(2,-10+bob*.3); ctx.lineTo(2-lp*3.4, 0); ctx.stroke();
+  // body
+  const mixC=(h1,t)=>{ // toward red with heat
+    const p1=parseInt(h1.slice(1),16), r=(p1>>16)&255,g=(p1>>8)&255,bl=p1&255;
+    return `rgb(${Math.round(lerp(r,255,t*.6))},${Math.round(lerp(g,90,t*.6))},${Math.round(lerp(bl,70,t*.6))})`;
+  };
+  ctx.fillStyle=mixC(w.shirt, heat);
+  ctx.beginPath(); ctx.roundRect(-6,-22+bob,12,14,4); ctx.fill();
+  ctx.fillStyle=`hsl(${w.tieHue} 60% 52%)`;
+  ctx.beginPath(); ctx.moveTo(0,-21+bob); ctx.lineTo(1.8,-17+bob); ctx.lineTo(0,-11+bob); ctx.lineTo(-1.8,-17+bob); ctx.closePath(); ctx.fill();
+  // head
+  ctx.fillStyle=w.skin;
+  ctx.beginPath(); ctx.arc(0,-27+bob,5.4,0,TAU); ctx.fill();
+  ctx.fillStyle='#3B2B27';
+  ctx.beginPath(); ctx.arc(0,-29+bob,4.6,Math.PI*1.05,Math.PI*1.95); ctx.fill();
+  // heat bar
+  if(w.heat>15){
+    ctx.fillStyle='rgba(58,32,48,.4)'; ctx.fillRect(-9,-38+bob,18,4);
+    ctx.fillStyle = heat<0.5?'#FFD66B':heat<0.8?'#FF9A5C':'#F0503C';
+    ctx.fillRect(-9,-38+bob,18*heat,4);
+  }
+  ctx.restore();
+}
+
+let last=performance.now();
+function frame(now){
+  const dt=Math.min((now-last)/1000,.05); last=now;
+  update(dt);
+  const t=now/1000;
+
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  // pastel void
+  const g=ctx.createLinearGradient(0,0,0,CH);
+  g.addColorStop(0,'#FFD9B8'); g.addColorStop(.45,'#F0A8A8'); g.addColorStop(1,'#C9A7E8');
+  ctx.fillStyle=g; ctx.fillRect(0,0,CW,CH);
+  // drifting motes
+  ctx.fillStyle='rgba(255,255,255,.35)';
+  for(let i=0;i<14;i++){
+    const mx=((i*167)% (CW+40)) -20 + Math.sin(t*.3+i)*10;
+    const my=((i*247 + t*9)% (CH+40)) -20;
+    ctx.beginPath(); ctx.arc(mx,my, 1.4+(i%3)*.7, 0, TAU); ctx.fill();
+  }
+  const bobY = Math.sin(t*0.8)*5;
+  // island shadow blob
+  ctx.fillStyle='rgba(90,50,110,.18)';
+  ctx.beginPath(); ctx.ellipse(CW/2, CH*0.46 + 150 + bobY*0.3, 150, 30, 0, 0, TAU); ctx.fill();
+
+  // blocks, painter's order
+  const sorted=[...B].sort((a,b2)=>{
+    const pa=project(a.x,a.y,a.z), pb=project(b2.x,b2.y,b2.z);
+    return (pa.depth - pb.depth) || (a.y - b2.y);
+  });
+  for(const b of sorted) drawBlock(b, bobY);
+
+  // walkers, sorted by depth among themselves (drawn over blocks — fine for tops)
+  const ws=[...walkers].sort((a,b2)=>walkerScreen(a).depth - walkerScreen(b2).depth);
+  for(const w of ws) drawWalker(w, bobY);
+
+  // particles (screen space)
+  for(const p of particles){
+    ctx.globalAlpha=clamp(p.life/p.max,0,1);
+    ctx.fillStyle=p.color;
+    ctx.beginPath(); ctx.arc(CW/2+p.sx, CH*0.46+p.sy, p.size, 0, TAU); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+refreshGate();
+
+/* debug handle for tests */
+window.__tw = {
+  state: ()=>({ mode, yaw, yawTarget, snap: snapIndex(yawTarget), connected: !!currentPath, saved: savedCount, melted: meltedCount }),
+  pathAt: i=>{ const p=findPath(i); return p && p.length; },
+  setYaw: i=>{ yaw = yawTarget = SNAPS[i]; refreshGate(); },
+  uv: i=>{ // diagnostic: projected screen-grid coords of every walkable top
+    const a = SNAPS[i];
+    return TOPS.map(t=>{
+      const p = project(t.x, t.y+1, t.z, a);
+      return { m:t.m, k:keyOf(t), u:Math.round(p.sx/TILE), v:Math.round(p.sy/(TILE*0.5)), d:+p.depth.toFixed(2) };
+    });
+  },
+};
+</script>
+</body>
+</html>
