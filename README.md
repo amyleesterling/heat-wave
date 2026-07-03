@@ -6,13 +6,17 @@ It's 104°F outside. The dress code, tragically, survives. Guide little business
 
 ## How to play
 
-- Coworkers walk on their own — Lemmings-style. Out in the sun, their heat meter climbs.
-- **Tap a tool, then tap the street** to place it:
-  - ⛱️ **Parasol** — portable shade; pauses the cooking
-  - ⛲ **Sprinkler** — aggressive moisture; actively cools everyone nearby
-  - 🍧 **Paleta cart** — hands out a limited stock of emergency popsicles
-- **Tap a person to fan them** with your finger. They love that. (Small cooldown per person.)
-- Hit the quota of survivors to clock out. Melted colleagues leave a puddle, their tie, and a memo from HR.
+Every level is two phases, Monument Valley style:
+
+1. **🧩 Solve the path.** The elevated walkway is broken by rotundas — tap to spin them until the path connects. Later levels gear rotundas together (spinning one spins its partner). Pre-place your tools in peace, then hit **OPEN THE DOORS**.
+2. **🚶 Run the commute.** Coworkers stream out Lemmings-style and their heat meters climb in the sun:
+   - ⛱️ **Parasol** — portable shade; pauses the cooking
+   - ⛲ **Sprinkler** — aggressive moisture; actively cools everyone nearby
+   - 🍧 **Paleta cart** — hands out a limited stock of emergency popsicles
+   - **Tap a person to fan them** with your finger. They love that.
+   - **⏩ fast-forward** once your setup is down.
+
+Watch for **scorch zones** (glowing asphalt = double cooking), **joggers** (fast, but they cook faster), and the **Regional VP** (slow, gold tie, worth 3 — baby them). Hit the quota to clock out; melted colleagues leave a puddle, their tie, and a memo from HR.
 
 Six handcrafted levels, then **Infinite Summer** endless mode: each day is hotter, and when a day finally defeats you, the run ends — post your `Day reached · total chilled` to the global **Hall of Legends** leaderboard. Progress saves locally.
 
