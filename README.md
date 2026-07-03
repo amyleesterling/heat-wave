@@ -2,7 +2,7 @@
 
 A tiny, oddly satisfying mobile browser game for surviving the heat wave from the safety of your couch.
 
-It's 104°F outside. The dress code, tragically, survives. Guide little business-casual coworkers from **Hot Desk Inc.** across the shimmering plaza to **The Cool Bldg** (it has AC) before they melt into pastel puddles. *Monument Valley* meets *Lemmings*, with lanyards.
+It's 104°F outside. The dress code, tragically, survives. Guide little business-casual coworkers from **Hot Desk Inc.** across the shimmering plaza to **THE PUBLIC POOL** before they melt into pastel puddles. Survivors cannonball in, khakis and all. *Monument Valley* meets *Lemmings*, with lanyards.
 
 ## How to play
 
@@ -14,7 +14,16 @@ It's 104°F outside. The dress code, tragically, survives. Guide little business
 - **Tap a person to fan them** with your finger. They love that. (Small cooldown per person.)
 - Hit the quota of survivors to clock out. Melted colleagues leave a puddle, their tie, and a memo from HR.
 
-Six handcrafted levels, then **Infinite Summer** endless mode. Progress saves locally.
+Six handcrafted levels, then **Infinite Summer** endless mode: each day is hotter, and when a day finally defeats you, the run ends — post your `Day reached · total chilled` to the global **Hall of Legends** leaderboard. Progress saves locally.
+
+## Leaderboard setup (one-time)
+
+The global board lives in Supabase. To wire it up:
+
+1. Run `supabase/leaderboard.sql` in the project's SQL editor (creates the `heatwave_scores` table with RLS: public read + insert only).
+2. Put the project's **publishable/anon key** in the `LB.key` field near the top of the script in `index.html`.
+
+Without a key the game still works — the Hall of Legends just shows your local best.
 
 ## Run it
 
