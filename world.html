@@ -283,6 +283,7 @@ let wi = 0;
 /* ---------- projection: yaw + tilt ---------- */
 const TILE = 34;
 let yaw = 0, yawTarget = 0, tiltT = 0, tiltTarget = 0, dragging=false, spun=false;
+let OCC = new Set(), emergeGlow = false, yawVel = 0, lastMoveTs = 0;
 
 function project(x,y,z,cy=yaw,tt=tiltT){
   const dx = x-3.5, dz = z-2.5;
@@ -312,6 +313,7 @@ function blockedKeys(){
 }
 function recomputeWalk(){
   const occ = new Set(B.map(keyOf));
+  OCC = occ;
   const blocked = blockedKeys();
   TOPS = B.filter(b => WALKMATS.has(b.m) && !occ.has(`${b.x},${b.y+1},${b.z}`) && !blocked.has(keyOf(b)));
   buildPotential();
@@ -425,6 +427,11 @@ function loadWorld(i){
   FALLS = (W.falls||[]).map(f=>({...f, diverted:false}));
   const r = W.build.call(null);
   DOOR = r.door; POOLS = r.pools;
+  // distant crumb islands — pure scenery that orbits past as you spin,
+  // in front at some angles and behind at others (that's the 3D)
+  add(-3.5,-2,7.5,'stone'); add(-3.5,-1,7.5,'garden');
+  add(11,-3,-2.5,'stone'); add(11,-2,-2.5,'stone'); add(11,-1,-2.5,'garden');
+  add(10,-2,9,'stone'); add(10,-1,9,'garden');
   // hand out the set dressing: an AC unit for the tallest office roof,
   // and a nap spot for the cat on the first open garden block
   const occD = new Set(B.map(keyOf));
@@ -513,6 +520,7 @@ el.mistBtn.addEventListener('click', ()=>{
 let px0=0, py0=0, yaw0=0, tilt0=0, moved=0, axisLock=null;
 canvas.addEventListener('pointerdown', e=>{
   dragging=true; moved=0; axisLock=null; px0=e.clientX; py0=e.clientY; yaw0=yaw; tilt0=tiltT;
+  yawVel=0; lastMoveTs=performance.now();
 });
 canvas.addEventListener('pointermove', e=>{
   if(!dragging) return;
@@ -520,7 +528,12 @@ canvas.addEventListener('pointermove', e=>{
   moved = Math.max(moved, Math.abs(dx), Math.abs(dy));
   // one gesture, one axis: whichever way the drag starts is the way it stays
   if(!axisLock && moved>10) axisLock = Math.abs(dx) >= Math.abs(dy) ? 'yaw' : 'tilt';
-  if(axisLock==='yaw') yaw = yaw0 + dx*0.012;
+  if(axisLock==='yaw'){
+    const nowMs = performance.now(), ny = yaw0 + dx*0.012;
+    yawVel = (ny - yaw) / Math.max(0.008, (nowMs - lastMoveTs)/1000);
+    lastMoveTs = nowMs;
+    yaw = ny;
+  }
   else if(axisLock==='tilt'){
     if(W.noTilt){
       tiltT = clamp(-dy*0.0012, 0, 0.08); // elastic: it leans, then springs back
@@ -533,7 +546,10 @@ addEventListener('pointerup', e=>{
   if(!dragging) return;
   dragging=false;
   if(moved < 8){ tapAt(e.clientX, e.clientY); }
-  const idx = snapIndex(yaw);
+  // a flick carries you to the next face — the world has momentum now
+  if(performance.now() - lastMoveTs > 120) yawVel = 0;
+  const glide = axisLock==='yaw' ? clamp(yawVel*0.11, -2.2, 2.2) : 0;
+  const idx = snapIndex(yaw + glide);
   yawTarget = SNAPS[idx] + Math.round((yaw - SNAPS[idx])/TAU)*TAU;
   const newTilt = tiltT > 0.5 ? 1 : 0;
   if(newTilt !== tiltTarget){ tiltTarget = newTilt; newTilt ? sfx.tiltup() : sfx.tiltdn(); }
@@ -606,11 +622,13 @@ function plantParasol(wx, wy){
 const SKIN=['#F6C9A0','#E8B48A','#C68B59','#8D5A3A'], SHIRT=['#8FB8DE','#A7D8C9','#E7C6E0','#F0E2B6','#B8C4E8'];
 function spawnWalker(){
   walkers.push({ tile: TOPS.find(t=>keyOf(t)===keyOf(DOOR)) || DOOR, next:null, t:0, heat:0, waiting:false,
+    emerge: 0, // steps out of the lobby, doesn't teleport onto the deck
     speed:rand(.8,1.05), phase:rand(0,TAU), jig:rand(-6,6),
     skin:SKIN[Math.floor(Math.random()*SKIN.length)],
     shirt:SHIRT[Math.floor(Math.random()*SHIRT.length)],
     tieHue:rand(0,360) });
   spawnedN++;
+  tone(420,.07,'triangle',.08); tone(560,.08,'triangle',.06,null,.05); // the door chime
 }
 function walkerScreen(w){
   const a = project(w.tile.x, w.tile.y+1, w.tile.z);
@@ -641,6 +659,12 @@ function update(dt){
   for(let i=walkers.length-1;i>=0;i--){
     const w = walkers[i];
     w.phase += dt*(w.waiting?2.5:9);
+
+    if((w.emerge ?? 1) < 1){ // still stepping out of the lobby AC — no sun, no walking
+      w.emerge = Math.min(1, w.emerge + dt/0.7);
+      anyMoving = true;
+      continue;
+    }
 
     const ws = walkerScreen(w);
     const underFall = FALLS.some(f=>!f.diverted && keyOf(f.tile)===keyOf(w.tile) && !w.next);
@@ -758,6 +782,15 @@ function drawBlock(b, bobY){
   const poly = (pts,fill)=>{ ctx.fillStyle=fill; ctx.strokeStyle=fill; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(...pts[0]); for(let i=1;i<pts.length;i++) ctx.lineTo(...pts[i]);
     ctx.closePath(); ctx.fill(); ctx.stroke(); };
+  if(!OCC.has(`${b.x},${b.y-1},${b.z}`)){
+    // craggy stalactite under every bottom block — floating things should LOOK like they float
+    const bots=[b1,b2,b3,b4];
+    let k=0; for(let i2=1;i2<4;i2++) if(bots[i2][1]>bots[k][1]) k=i2;
+    const len = 9 + ((Math.round(b.x*2)*7 + Math.round(b.z*2)*13 + (b.grp?3:0)) % 5) * 6;
+    const apex=[bots[k][0], bots[k][1]+len];
+    poly([bots[(k+3)%4], bots[k], apex], m.left);
+    poly([bots[k], bots[(k+1)%4], apex], m.right);
+  }
   const faces = [
     { pts:[t2,t3,b3,b2], n:[ 1, 0] },
     { pts:[t3,t4,b4,b3], n:[ 0, 1] },
@@ -781,15 +814,18 @@ function drawBlock(b, bobY){
         ctx.beginPath(); ctx.arc(x0+sw*.6, y0+len, 1.4, 0, TAU); ctx.fill();
       }
     }
-    if(b.m==='office'){ // lit windows — someone is always working late
+    if(b.m==='office'){ // a proper grid of windows — some lit, some gone home
       const [pA,pB,pC,pD] = f.pts; // top-left going around
-      ctx.fillStyle = 'rgba(255,225,170,.85)';
-      for(const [fu,fv] of [[.28,.3],[.62,.3],[.28,.62],[.62,.62]]){
+      const fk = f.n[0]>0 ? 1 : f.n[1]>0 ? 2 : f.n[0]<0 ? 3 : 4;
+      for(let wi2=0;wi2<2;wi2++) for(let wj=0;wj<3;wj++){
+        const dark = ((b.x*3 + b.y*5 + b.z*7 + wi2*11 + wj*13 + fk) % 5) === 0;
+        ctx.fillStyle = dark ? 'rgba(70,45,60,.35)' : 'rgba(255,225,170,.85)';
+        const fu = .2 + wi2*.36, fv = .14 + wj*.28;
         const topx = lerp(pA[0],pB[0],fu), topy = lerp(pA[1],pB[1],fu);
         const botx = lerp(pD[0],pC[0],fu), boty = lerp(pD[1],pC[1],fu);
         const wx0 = lerp(topx,botx,fv), wy0 = lerp(topy,boty,fv);
-        const wx1 = lerp(topx,botx,fv+.16), wy1 = lerp(topy,boty,fv+.16);
-        const ex = (pB[0]-pA[0])*0.1, ey = (pB[1]-pA[1])*0.1;
+        const wx1 = lerp(topx,botx,fv+.17), wy1 = lerp(topy,boty,fv+.17);
+        const ex = (pB[0]-pA[0])*0.11, ey = (pB[1]-pA[1])*0.11;
         ctx.beginPath();
         ctx.moveTo(wx0,wy0); ctx.lineTo(wx0+ex,wy0+ey); ctx.lineTo(wx1+ex,wy1+ey); ctx.lineTo(wx1,wy1);
         ctx.closePath(); ctx.fill();
@@ -876,8 +912,20 @@ function drawBlock(b, bobY){
   }
   if(b.m==='office' && b.y===0 && DOOR && b.z===DOOR.z && Math.abs(b.x-DOOR.x)===1){
     const dm = [(t2[0]+b3[0]+t3[0]+b2[0])/4, (t2[1]+b3[1]+t3[1]+b2[1])/4];
-    ctx.fillStyle='#7E4638';
-    ctx.beginPath(); ctx.ellipse(dm[0], dm[1]+3, 6.5, 9, 0, 0, TAU); ctx.fill();
+    if(emergeGlow){ // somebody's coming through — door swings open, AC escapes
+      ctx.fillStyle='rgba(255,220,150,.3)';
+      ctx.beginPath(); ctx.ellipse(dm[0]+7, dm[1]+8, 14, 8, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle='#FFE9B8';
+      ctx.beginPath(); ctx.ellipse(dm[0], dm[1]+3, 7, 9.5, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle='#7E4638';
+      ctx.beginPath(); ctx.moveTo(dm[0]+4,dm[1]-6); ctx.lineTo(dm[0]+11,dm[1]-9.5);
+      ctx.lineTo(dm[0]+11,dm[1]+8.5); ctx.lineTo(dm[0]+4,dm[1]+12); ctx.closePath(); ctx.fill();
+    } else {
+      ctx.fillStyle='#7E4638';
+      ctx.beginPath(); ctx.ellipse(dm[0], dm[1]+3, 6.5, 9, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle='rgba(255,225,170,.55)'; // lobby glass — the AC hums inside
+      ctx.beginPath(); ctx.ellipse(dm[0], dm[1]-1, 3.2, 2.6, 0, 0, TAU); ctx.fill();
+    }
     // striped awning — HOT DESK INC. cares about kerb appeal
     for(let i=0;i<4;i++){
       ctx.fillStyle = i%2 ? '#FF8B7E' : '#FFF6E8';
@@ -916,6 +964,15 @@ function drawBlock(b, bobY){
     ctx.beginPath(); ctx.ellipse(fx, fy, 8, 5, 0, 0, TAU); ctx.fill();
     ctx.fillStyle=MATS.pool.top;
     ctx.beginPath(); ctx.ellipse(fx, fy, 3.6, 2.2, 0, 0, TAU); ctx.fill();
+  }
+  if(b.m==='walk' && DOOR && keyOf(b)===keyOf(DOOR)){
+    // welcome mat outside the lobby — HOT DESK INC. insists
+    const d0 = project(DOOR.x, DOOR.y+1, DOOR.z), d1 = project(DOOR.x-1, DOOR.y+1, DOOR.z);
+    const mxx = mx + (d1.sx-d0.sx)*0.32, myy = my + (d1.sy-d0.sy)*0.32;
+    ctx.fillStyle='#C96F5C';
+    ctx.beginPath(); ctx.roundRect(mxx-7, myy-3.4, 14, 6.8, 2); ctx.fill();
+    ctx.strokeStyle='rgba(255,246,232,.7)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.roundRect(mxx-5.4, myy-2.2, 10.8, 4.4, 1.5); ctx.stroke();
   }
   if(b.m==='walk' && POOLS.length){
     // towel on the tile beside the pool — someone claimed the spot at 6am
@@ -979,9 +1036,16 @@ function drawFalls(bobY, t){
 function drawWalker(w, bobY){
   const p = walkerScreen(w);
   const dive = w.diving != null ? clamp(w.diving,0,1) : 0;
-  const cx = CW/2 + p.sx, cy = CH*0.46 + p.sy + bobY - Math.sin(dive*Math.PI)*24 + dive*dive*10;
+  let cx = CW/2 + p.sx, cy = CH*0.46 + p.sy + bobY - Math.sin(dive*Math.PI)*24 + dive*dive*10;
+  const em = w.emerge == null ? 1 : w.emerge;
+  if(em < 1){ // slide out through the doorway, growing to full size
+    const d0 = project(DOOR.x, DOOR.y+1, DOOR.z), d1 = project(DOOR.x-1, DOOR.y+1, DOOR.z);
+    cx += (d1.sx-d0.sx)*(1-em)*0.72;
+    cy += (d1.sy-d0.sy)*(1-em)*0.72;
+  }
   const heat = w.heat/100, bob = Math.sin(w.phase)*1.4;
   ctx.save(); ctx.translate(cx, cy);
+  if(em < 1) ctx.scale(.55+.45*em, .55+.45*em);
   ctx.fillStyle='rgba(90,50,70,.3)';
   ctx.beginPath(); ctx.ellipse(0, 2, 8, 3, 0, 0, TAU); ctx.fill();
   const lp=Math.sin(w.phase);
@@ -1053,7 +1117,7 @@ function frame(now){
     ctx.beginPath(); ctx.arc(mx,my, 1.4+(i%3)*.7, 0, TAU); ctx.fill();
   }
   // ☀️ the antagonist, upper right, radiating smugness
-  const sunX = CW-56, sunY = 148;
+  const sunX = CW-56 + Math.sin(yaw)*10, sunY = 148 + Math.cos(yaw)*4; // far-away parallax
   const sg = ctx.createRadialGradient(sunX,sunY,4,sunX,sunY,54);
   sg.addColorStop(0,'rgba(255,236,190,.95)');
   sg.addColorStop(.35,'rgba(255,214,140,.5)');
@@ -1070,7 +1134,7 @@ function frame(now){
 
   // clouds drift behind the island at three depths
   for(const c of CLOUDS){
-    const cxp = ((c.x + t*c.v) % (CW+220)) - 110, cyp = CH*c.y;
+    const cxp = ((c.x + t*c.v) % (CW+220)) - 110 + Math.sin(yaw + c.y*3)*46*(1.35-c.s), cyp = CH*c.y;
     ctx.fillStyle = `rgba(255,255,255,${c.a})`;
     ctx.beginPath();
     ctx.arc(cxp, cyp, 16*c.s, 0, TAU);
@@ -1090,6 +1154,7 @@ function frame(now){
   }
 
   const bobY = Math.sin(t*0.8)*5;
+  emergeGlow = walkers.some(w2 => (w2.emerge ?? 1) < 1);
 
   // the island's shadow: its actual footprint, cast on the haze below
   ctx.fillStyle='rgba(90,50,110,.15)';
