@@ -17,12 +17,12 @@ Every level is two phases, Monument Valley style:
    - ⛱️ **Parasol** — portable shade; pauses the cooking
    - ⛲ **Sprinkler** — aggressive moisture; actively cools everyone nearby
    - 🍧 **Paleta cart** — hands out a limited stock of emergency popsicles
-   - **Tap a person to fan them** with your finger. They love that.
+   - **🌬 COLD SNAP** — one button, everyone outside gets a burst of AC (on a cooldown)
    - **⏩ fast-forward** once your setup is down.
 
 Watch for **scorch zones** (glowing asphalt = double cooking), **joggers** (fast, but they cook faster), and the **Regional VP** (slow, gold tie, worth 3 — baby them). Hit the quota to clock out; melted colleagues leave a puddle, their tie, and a memo from HR.
 
-Six handcrafted levels, then **Infinite Summer** endless mode: each day is hotter, and when a day finally defeats you, the run ends — post your `Day reached · total chilled` to the global **Hall of Legends** leaderboard. Progress saves locally.
+Six handcrafted levels, then **Infinite Summer** endless mode: each day is hotter, and the run ends when **8 coworkers total have puddled** — then post your splashes to the global **Hall of Legends** leaderboard, which ranks by people saved and shows your splash-vs-puddle ratio. Progress saves locally.
 
 ## Leaderboard setup (one-time)
 

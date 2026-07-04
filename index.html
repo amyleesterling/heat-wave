@@ -455,7 +455,7 @@ const TOOL_DEFS = {
    other via link), scorch zones, and a walker mix.                    */
 const LEVELS = [
   { name:"Casual Friday", temp:98, pal:0,
-    brief:"It’s 98°F and the office pool pass finally cleared legal. Get <b>5</b> coworkers to the water. Place your gear, open the doors, and tap people to fan them — they love that.",
+    brief:"It’s 98°F and the office pool pass finally cleared legal. Get <b>5</b> coworkers to the water. Place your gear, open the doors, and when the whole crowd is cooking hit <b>COLD SNAP 🌬</b> — a merciful burst of AC on a cooldown.",
     heat:8.5, count:8, quota:5, interval:2.3, speed:46,
     tools:{ umbrella:2, sprinkler:1, cart:1 }, cartStock:4,
     ctrl:[{x:88,y:268,z:0},{x:200,y:300,z:14},{x:298,y:362,z:40},{x:274,y:468,z:52},{x:170,y:530,z:30},{x:206,y:622,z:10},{x:330,y:656,z:0}] },
@@ -483,7 +483,7 @@ const LEVELS = [
     rotors:[{at:0.24, r:42, link:1},{at:0.5, r:42, link:2},{at:0.76, r:42, link:0}], scorch:[0.38],
     ctrl:[{x:92,y:262,z:0},{x:180,y:336,z:26},{x:262,y:406,z:52},{x:318,y:486,z:36},{x:212,y:562,z:14},{x:318,y:652,z:0}] },
   { name:"Heat Dome Friday", temp:112, pal:5,
-    brief:"The heat dome has an agenda and it’s not hybrid-friendly. Geared rotundas, scorching asphalt, <b>9</b> must make it. Godspeed — fan liberally.",
+    brief:"The heat dome has an agenda and it’s not hybrid-friendly. Geared rotundas, scorching asphalt, <b>9</b> must make it. Godspeed — snap cold early, snap cold often.",
     heat:14.5, count:13, quota:9, interval:1.6, speed:43, mix:{ jogger:0.3, vip:true },
     tools:{ umbrella:2, sprinkler:2, cart:2 }, cartStock:6,
     rotors:[{at:0.26, r:44, link:1},{at:0.52, r:44, link:2},{at:0.78, r:44, link:0}], scorch:[0.40, 0.66],
@@ -507,6 +507,7 @@ let levelIndex = 0, endlessDay = 0;
 let level=null, path=null;
 let walkers=[], placed=[], particles=[], puddles=[], usedNames=[], rotors=[], scorchZones=[];
 let toolStock={}, selectedTool=null, hoverPos=null, timeScale=1;
+let mistCd = 0; const MIST_CD = 14, MIST_AMOUNT = 24;
 let spawned=0, savedCount=0, meltedCount=0, spawnTimer=0, endTimer=-1, playT=0;
 let meltJokes=[], endlessChilled=0, endlessMelted=0, lastRun=null;
 const PUDDLE_BUDGET = 8; // an Infinite Summer run ends when this many have puddled
@@ -557,10 +558,37 @@ function buildToolbar(){
     b.addEventListener('click', ev=>{ ev.stopPropagation(); selectTool(key); });
     el.toolbar.appendChild(b);
   }
+  // COLD SNAP — no aiming, no placing: one button, everyone gets misted
+  const m = document.createElement('button');
+  m.className='tool'; m.id='mistTool';
+  m.innerHTML = `<span class="ico">🌬</span><span class="lbl">COLD SNAP</span><span class="cnt">✓</span>`;
+  m.addEventListener('click', ev=>{ ev.stopPropagation(); coldSnap(); });
+  el.toolbar.appendChild(m);
+  refreshToolbar();
+}
+function coldSnap(){
+  if(S.mode!=='playing'){ toast('Save it for when they’re outside.'); return; }
+  if(mistCd > 0) return;
+  if(!walkers.length){ toast('Nobody out there yet.'); return; }
+  mistCd = MIST_CD;
+  sfx.fan(); sfx.save();
+  for(const w of walkers){
+    if(w.state!=='walk') continue;
+    w.heat = Math.max(0, w.heat - MIST_AMOUNT);
+    const pos = path.at(w.d);
+    swirl(pos.x, pos.y-(pos.z||0)-16);
+  }
+  toast('🌬 A merciful gust sweeps the plaza.', true);
   refreshToolbar();
 }
 function refreshToolbar(){
   for(const b of el.toolbar.children){
+    if(b.id === 'mistTool'){
+      const ready = mistCd <= 0;
+      b.querySelector('.cnt').textContent = ready ? '✓' : Math.ceil(mistCd)+'s';
+      b.classList.toggle('empty', !ready);
+      continue;
+    }
     const k = b.dataset.key;
     b.querySelector('.cnt').textContent = toolStock[k];
     b.classList.toggle('empty', toolStock[k]<=0);
@@ -595,7 +623,7 @@ function spawnWalker(){
     skin: pick(SKIN), hair: pick(HAIR),
     shirt: isVip ? '#F7F3EA' : isJog ? pick(['#FF8FAF','#8FE0C8','#FFD66B','#9AD6F0']) : pick(SHIRT),
     pants: isJog ? '#4A566A' : pick(PANTS),
-    tieHue: rand(0,360), phase: rand(0,TAU), fanCd: 0, popT: 0,
+    tieHue: rand(0,360), phase: rand(0,TAU), popT: 0,
     hasBag: isVip ? true : isJog ? false : Math.random()<0.7,
     glasses: isVip ? true : Math.random()<0.3,
   };
@@ -843,22 +871,6 @@ canvas.addEventListener('pointerdown', e=>{
     }
     return;
   }
-  if(S.mode==='plan') return;
-  // fan a walker
-  let best=null, bd=42*42;
-  for(const w of walkers){
-    if(w.state!=='walk') continue;
-    const pos = path.at(w.d);
-    const d2 = dist2(p.x, p.y, pos.x, pos.y-(pos.z||0)-14);
-    if(d2 < bd){ bd=d2; best=w; }
-  }
-  if(best && best.fanCd<=0){
-    best.heat = Math.max(0, best.heat - 9);
-    best.fanCd = 1.1;
-    const pos = path.at(best.d);
-    swirl(pos.x, pos.y-(pos.z||0)-16);
-    sfx.fan();
-  }
 });
 document.addEventListener('gesturestart', e=>e.preventDefault());
 
@@ -911,6 +923,7 @@ function update(dt){
 
   dt *= timeScale; // ⏩
   playT += dt;
+  if(mistCd > 0){ mistCd -= dt; if(mistCd <= 0) mistCd = 0; refreshToolbar(); }
 
   if(spawned < level.count){
     spawnTimer -= dt;
@@ -927,7 +940,7 @@ function update(dt){
 
   for(let i=walkers.length-1;i>=0;i--){
     const w = walkers[i];
-    w.fanCd -= dt; w.phase += dt*(w.waiting ? 2 : 9);
+    w.phase += dt*(w.waiting ? 2 : 9);
     if(w.state==='walk'){
       let nd = w.d + w.speed*dt * (w.popT>0 ? 1.06 : 1);
       w.waiting = false;
