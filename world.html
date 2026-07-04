@@ -134,7 +134,7 @@ const sfx = {
    Worlds may define cranks:[{px,pz,tag}] and falls:
    [{top:{x,y,z}, tile:{x,y,z}, valve:{x,y,z}}].
    ============================================================ */
-let B = [], TOPS = [], DOOR = null, POOLS = [], CRANKS = [], FALLS = [];
+let B = [], TOPS = [], DOOR = null, POOLS = [], CRANKS = [], FALLS = [], DECO = {};
 const add = (x,y,z,m,grp)=>B.push(grp ? {x,y,z,m,grp} : {x,y,z,m});
 const col = (x,z,h,m='stone')=>{ for(let y=0;y<h;y++) add(x,y,z,m); };
 function baseOffice(){ // door tower + deck A (x=1..3, walk tops at surf 2)
@@ -424,6 +424,14 @@ function loadWorld(i){
   FALLS = (W.falls||[]).map(f=>({...f, diverted:false}));
   const r = W.build.call(null);
   DOOR = r.door; POOLS = r.pools;
+  // hand out the set dressing: an AC unit for the tallest office roof,
+  // and a nap spot for the cat on the first open garden block
+  const occD = new Set(B.map(keyOf));
+  DECO = {};
+  const roofs = B.filter(b=>b.m==='office' && !occD.has(`${b.x},${b.y+1},${b.z}`));
+  if(roofs.length) DECO.ac = keyOf(roofs.reduce((p,c)=>c.y>p.y?c:p));
+  const lawns = B.filter(b=>b.m==='garden' && !occD.has(`${b.x},${b.y+1},${b.z}`));
+  if(lawns.length) DECO.cat = keyOf(lawns[0]);
   walkers=[]; parasols=[]; particles=[]; crankAnims={};
   savedCount=0; meltedCount=0; spawnT=0; spawnedN=0; stuckT=0;
   mistCd=0; el.mistBtn.textContent='🌬 ready';
@@ -718,6 +726,13 @@ const MATS = {
   valve:  { top:'#9BC7DE', left:'#6FA3C0', right:'#587F9C' },
 };
 
+// slow weather for the middle distance
+const CLOUDS = [
+  { x:  40, y:.13, s:1.0, v:  7, a:.50 },
+  { x: 260, y:.22, s:0.7, v: 11, a:.40 },
+  { x: 150, y:.32, s:0.55, v: 15, a:.32 },
+];
+
 function groupSpin(b){
   // residual crank animation: rotate the block around its pivot
   if(!b.grp || !crankAnims[b.grp]) return null;
@@ -753,6 +768,18 @@ function drawBlock(b, bobY){
     const rxn = f.n[0]*cs - f.n[1]*sn, rzn = f.n[0]*sn + f.n[1]*cs;
     if(rxn + rzn <= 0.02) continue;
     poly(f.pts, (rxn - rzn) > 0 ? m.right : m.left);
+    if(b.m==='garden'){ // vines spilling over the edge
+      const [pA,pB] = f.pts;
+      ctx.strokeStyle='rgba(107,158,100,.85)'; ctx.lineWidth=1.4; ctx.lineCap='round';
+      ctx.fillStyle='rgba(107,158,100,.85)';
+      for(const fu of [.22,.52,.8]){
+        const x0=lerp(pA[0],pB[0],fu), y0=lerp(pA[1],pB[1],fu);
+        const len = 7+fu*8, sw = Math.sin(performance.now()/900 + fu*7 + b.x)*1.5;
+        ctx.beginPath(); ctx.moveTo(x0,y0);
+        ctx.quadraticCurveTo(x0+sw, y0+len*.6, x0+sw*.6, y0+len); ctx.stroke();
+        ctx.beginPath(); ctx.arc(x0+sw*.6, y0+len, 1.4, 0, TAU); ctx.fill();
+      }
+    }
     if(b.m==='office'){ // lit windows — someone is always working late
       const [pA,pB,pC,pD] = f.pts; // top-left going around
       ctx.fillStyle = 'rgba(255,225,170,.85)';
@@ -777,11 +804,47 @@ function drawBlock(b, bobY){
     ctx.beginPath(); ctx.moveTo(mx-10, my+(ph-.5)*8); ctx.quadraticCurveTo(mx, my+2+(ph-.5)*8, mx+10, my+(ph-.5)*8); ctx.stroke();
     ctx.globalAlpha = 1;
   }
-  if(b.m==='garden'){
+  if(b.m==='garden' && keyOf(b)!==DECO.cat){
     ctx.fillStyle='#FF8FAF';
     for(const [fx,fy] of [[-6,-2],[4,-4],[0,3]]){
       ctx.beginPath(); ctx.arc(mx+fx, my+fy, 2.4, 0, TAU); ctx.fill();
     }
+  }
+  if(keyOf(b)===DECO.cat){ // the resident cat, unbothered by the heat advisory
+    const nowMs = performance.now(), tw = Math.sin(nowMs/700)*3;
+    ctx.fillStyle='#C9B8D8';
+    ctx.beginPath(); ctx.ellipse(mx-1, my-3, 7, 4.2, 0, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(mx+6, my-6, 3.6, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(mx+3.6,my-8.6); ctx.lineTo(mx+4.8,my-11.6); ctx.lineTo(mx+6.2,my-8.9); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(mx+6.2,my-9.2); ctx.lineTo(mx+7.8,my-11.8); ctx.lineTo(mx+8.6,my-8.7); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='#C9B8D8'; ctx.lineWidth=2.2; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(mx-7,my-2);
+    ctx.quadraticCurveTo(mx-12, my-6+tw, mx-10+tw*.4, my-10+tw); ctx.stroke();
+    const zp = (nowMs/2600)%1;
+    if(zp<0.55){
+      ctx.globalAlpha = 1 - zp/0.55;
+      ctx.fillStyle='#5A3A4A'; ctx.font='800 9px ui-rounded, system-ui, sans-serif';
+      ctx.fillText('z', mx+10, my-14-zp*12);
+      ctx.globalAlpha = 1;
+    }
+  }
+  if(keyOf(b)===DECO.ac){ // rooftop AC — Facilities keeps the cold air indoors, obviously
+    const spin = performance.now()/140;
+    ctx.fillStyle='rgba(60,30,50,.16)';
+    ctx.beginPath(); ctx.ellipse(mx, my+1.5, 10, 3.4, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle='#DDD3EA';
+    ctx.beginPath(); ctx.roundRect(mx-8, my-11, 16, 11, 2); ctx.fill();
+    ctx.strokeStyle='#9C90B4'; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.roundRect(mx-8, my-11, 16, 11, 2); ctx.stroke();
+    ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(mx-2.5, my-5.5, 3.6, 0, TAU); ctx.stroke();
+    ctx.lineWidth=1.2;
+    for(let i=0;i<3;i++){
+      const a = spin + i*(TAU/3);
+      ctx.beginPath(); ctx.moveTo(mx-2.5, my-5.5);
+      ctx.lineTo(mx-2.5+Math.cos(a)*2.8, my-5.5+Math.sin(a)*2.8); ctx.stroke();
+    }
+    for(let i=0;i<3;i++){ ctx.beginPath(); ctx.moveTo(mx+3.4, my-9.4+i*3); ctx.lineTo(mx+6.2, my-9.4+i*3); ctx.stroke(); }
   }
   if(b.m==='crank'){ // bolt + rotation affordance
     ctx.fillStyle='#8A6230';
@@ -799,6 +862,17 @@ function drawBlock(b, bobY){
     ctx.strokeStyle=`rgba(255,255,255,${pulse})`;
     ctx.beginPath(); ctx.ellipse(mx, my, 12, 7.5, 0, 0, TAU); ctx.stroke();
   }
+  if(b.m==='office' && b.y===1 && DOOR && b.z===DOOR.z && Math.abs(b.x-DOOR.x)===1
+     && Math.cos(yaw)+Math.sin(yaw) > 0.02){
+    // company sign above the awning — branding survives everything
+    const dm = [(t2[0]+b3[0]+t3[0]+b2[0])/4, (t2[1]+b3[1]+t3[1]+b2[1])/4];
+    ctx.fillStyle='#FFF6E8';
+    ctx.beginPath(); ctx.roundRect(dm[0]-17, dm[1]-6, 34, 11, 3); ctx.fill();
+    ctx.fillStyle='#A85546'; ctx.font='800 6.5px ui-rounded, system-ui, sans-serif';
+    ctx.textAlign='center';
+    ctx.fillText('HOT DESK', dm[0], dm[1]+2.4);
+    ctx.textAlign='left';
+  }
   if(b.m==='office' && b.y===0 && DOOR && b.z===DOOR.z && Math.abs(b.x-DOOR.x)===1){
     const dm = [(t2[0]+b3[0]+t3[0]+b2[0])/4, (t2[1]+b3[1]+t3[1]+b2[1])/4];
     ctx.fillStyle='#7E4638';
@@ -811,6 +885,28 @@ function drawBlock(b, bobY){
       ctx.lineTo(dm[0]-4+i*5.5, dm[1]-4.5); ctx.lineTo(dm[0]-9.5+i*5.5, dm[1]-4.5);
       ctx.closePath(); ctx.fill();
     }
+  }
+  if(b.m==='pool' && POOLS.length && keyOf(b)===keyOf(POOLS[0])){
+    // chrome ladder — for people who arrive some way other than cannonball
+    ctx.strokeStyle='#F2F2F7'; ctx.lineWidth=1.8; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(mx-11, my-7); ctx.lineTo(mx-11, my+3); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(mx-6, my-8.5); ctx.lineTo(mx-6, my+1.5); ctx.stroke();
+    ctx.lineWidth=1.3;
+    for(const dy of [-4.5, -0.5]){
+      ctx.beginPath(); ctx.moveTo(mx-11, my+dy); ctx.lineTo(mx-6, my-1.5+dy); ctx.stroke();
+    }
+  }
+  if(b.m==='pool' && POOLS.length>=3 && keyOf(b)===keyOf(POOLS[1])){
+    // beach ball adrift
+    const bx = mx + Math.sin(performance.now()/1100+1)*3.5, by = my + Math.cos(performance.now()/1500)*1.6;
+    const cols = ['#FF8B7E','#FFF6E8','#8FB8DE','#FFD66B'];
+    for(let i=0;i<4;i++){
+      ctx.fillStyle = cols[i];
+      ctx.beginPath(); ctx.moveTo(bx,by);
+      ctx.arc(bx, by, 4.6, i*Math.PI/2 + 0.6, (i+1)*Math.PI/2 + 0.6); ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle='rgba(255,255,255,.85)';
+    ctx.beginPath(); ctx.arc(bx-1.4, by-1.6, 1.2, 0, TAU); ctx.fill();
   }
   if(b.m==='pool' && POOLS.length && keyOf(b)===keyOf(POOLS[POOLS.length-1]) && b.y===POOLS[0].y){
     // a pink donut floatie drifting in the far pool tile
@@ -829,6 +925,13 @@ function drawBlock(b, bobY){
       ctx.fillRect(-7,-4,14,8);
       ctx.fillStyle='#FF8B7E'; ctx.fillRect(-7,-4,14,2.4);
       ctx.restore();
+      // flip-flops, kicked off in a hurry
+      ctx.fillStyle='#FF8B7E';
+      ctx.beginPath(); ctx.ellipse(mx-6, my+7, 1.9, 3, 0.4, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(mx-1.5, my+8.5, 1.9, 3, 0.15, 0, TAU); ctx.fill();
+      ctx.fillStyle='rgba(255,246,232,.9)';
+      ctx.beginPath(); ctx.arc(mx-6, my+6, .7, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(mx-1.5, my+7.5, .7, 0, TAU); ctx.fill();
     }
   }
 }
@@ -853,6 +956,13 @@ function drawFalls(bobY, t){
       // splash
       if(Math.random()<0.3)
         particles.push({sx:top.sx+rand(-8,8), sy:bot.sy-2, vx:rand(-30,30), vy:rand(-60,-20), life:.4, max:.4, color:'#BFE9F7', size:rand(1.5,2.6)});
+      // a shy rainbow in the spray
+      ctx.lineWidth=2.4;
+      const rcs = ['rgba(255,139,126,.3)','rgba(255,214,107,.3)','rgba(155,199,222,.3)'];
+      for(let i=0;i<3;i++){
+        ctx.strokeStyle = rcs[i];
+        ctx.beginPath(); ctx.arc(cx+top.sx, cy+bot.sy-2, 15+i*3.2, Math.PI, TAU); ctx.stroke();
+      }
     } else {
       // diverted: dribbles off the side of the fountain cube, missing the path
       ctx.strokeStyle='rgba(160,220,245,.6)'; ctx.lineWidth=3;
@@ -941,6 +1051,43 @@ function frame(now){
     const my=((i*247 + t*9)%(CH+40))-20;
     ctx.beginPath(); ctx.arc(mx,my, 1.4+(i%3)*.7, 0, TAU); ctx.fill();
   }
+  // ☀️ the antagonist, upper right, radiating smugness
+  const sunX = CW-56, sunY = 148;
+  const sg = ctx.createRadialGradient(sunX,sunY,4,sunX,sunY,54);
+  sg.addColorStop(0,'rgba(255,236,190,.95)');
+  sg.addColorStop(.35,'rgba(255,214,140,.5)');
+  sg.addColorStop(1,'rgba(255,214,140,0)');
+  ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(sunX,sunY,54,0,TAU); ctx.fill();
+  ctx.fillStyle='#FFE3A8'; ctx.beginPath(); ctx.arc(sunX,sunY,16,0,TAU); ctx.fill();
+  ctx.strokeStyle='rgba(255,227,168,.75)'; ctx.lineWidth=2; ctx.lineCap='round';
+  for(let i=0;i<8;i++){
+    const a = t*0.15 + i*(TAU/8), r1 = 21, r2 = 26 + Math.sin(t*3+i)*2;
+    ctx.beginPath();
+    ctx.moveTo(sunX+Math.cos(a)*r1, sunY+Math.sin(a)*r1);
+    ctx.lineTo(sunX+Math.cos(a)*r2, sunY+Math.sin(a)*r2); ctx.stroke();
+  }
+
+  // clouds drift behind the island at three depths
+  for(const c of CLOUDS){
+    const cxp = ((c.x + t*c.v) % (CW+220)) - 110, cyp = CH*c.y;
+    ctx.fillStyle = `rgba(255,255,255,${c.a})`;
+    ctx.beginPath();
+    ctx.arc(cxp, cyp, 16*c.s, 0, TAU);
+    ctx.arc(cxp+15*c.s, cyp-6*c.s, 12*c.s, 0, TAU);
+    ctx.arc(cxp+30*c.s, cyp, 13*c.s, 0, TAU);
+    ctx.fill();
+  }
+
+  // a couple of commuting birds
+  ctx.strokeStyle='rgba(90,58,74,.5)'; ctx.lineWidth=1.6; ctx.lineCap='round';
+  for(let i=0;i<2;i++){
+    const a = t*0.14 + i*2.6;
+    const bx = CW/2 + Math.cos(a)*CW*0.38, by = CH*0.19 + Math.sin(a)*24 + i*24;
+    const fl = Math.sin(t*7 + i*2)*2.6;
+    ctx.beginPath(); ctx.moveTo(bx-4,by); ctx.quadraticCurveTo(bx-2, by-2-fl, bx, by);
+    ctx.quadraticCurveTo(bx+2, by-2-fl, bx+4, by); ctx.stroke();
+  }
+
   const bobY = Math.sin(t*0.8)*5;
 
   // the island's shadow: its actual footprint, cast on the haze below
