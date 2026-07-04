@@ -4,6 +4,8 @@
 
 **🌍 Tiny World (beta): [amyleesterling.github.io/heat-wave/world.html](https://amyleesterling.github.io/heat-wave/world.html)** — a rotatable pastel-Escher diorama: spin the little world until the walkways agree
 
+**🏝 The Resort: [amyleesterling.github.io/heat-wave/title.html](https://amyleesterling.github.io/heat-wave/title.html)** — the living title screen: the whole floating island in one animated shot (campus, skybridge, Oasis Suite™), with doors into both games
+
 A tiny, oddly satisfying mobile browser game for surviving the heat wave from the safety of your couch.
 
 It's 104°F outside. The dress code, tragically, survives. Guide little business-casual coworkers from **Hot Desk Inc.** across the shimmering plaza to **THE PUBLIC POOL** before they melt into pastel puddles. Survivors cannonball in, khakis and all. *Monument Valley* meets *Lemmings*, with lanyards.
