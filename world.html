@@ -63,6 +63,7 @@
 
 <div id="hud">
   <a class="chip" href="index.html">← the commute</a>
+  <button class="chip" id="mistBtn" style="border:none;font-family:inherit;cursor:pointer">🌬 ready</button>
   <div class="chip">⛱ <b id="paras">2</b> &nbsp; 🧊 <b id="saved">0</b>/<b id="quota">3</b> &nbsp; 🫠 <b id="melted">0</b></div>
 </div>
 <div id="status">spin the world 🌍</div>
@@ -143,7 +144,7 @@ function baseOffice(){ // door tower + deck A (x=1..3, walk tops at surf 2)
 
 const WORLDS = [
   { name:'The Liquid Oasis', gated:true, count:5, quota:3, heat:13, parasols:2,
-    blurb:'<b>Drag sideways to spin the world.</b> Find the view where the broken walkways <i>agree</i>, then open the doors. <b>Tap a tile to plant a parasol ⛱ · tap a climber to fan 🌬.</b>',
+    blurb:'<b>Drag sideways to spin the world.</b> Find the view where the broken walkways <i>agree</i>, then open the doors. <b>Tap a tile to plant a parasol ⛱ · hit 🌬 COLD SNAP up top when the crowd overheats.</b>',
     build(){
       baseOffice(); col(4,4,1,'stone'); add(4,1,4,'walk');
       for(let x=2;x<=5;x++){ col(x,0,3,'stone'); add(x,3,0,'walk'); }
@@ -384,12 +385,13 @@ function routeFrom(tile, allowFrontier=false){
 
 /* ---------- state ---------- */
 const $ = s=>document.querySelector(s);
-const el = { saved:$('#saved'), paras:$('#paras'), melted:$('#melted'), quota:$('#quota'), status:$('#status'),
+const el = { saved:$('#saved'), paras:$('#paras'), mistBtn:$('#mistBtn'), melted:$('#melted'), quota:$('#quota'), status:$('#status'),
              goBtn:$('#goBtn'), modal:$('#modal'), startBtn:$('#startBtn'),
              mKicker:$('#mKicker'), mName:$('#mName'), mBlurb:$('#mBlurb') };
 let mode='spin';
 let walkers=[], savedCount=0, meltedCount=0, spawnT=0, spawnedN=0, particles=[], parasols=[];
 let W = WORLDS[0], crankAnims = {}, stuckT = 0;
+let mistCd = 0; const MIST_CD = 15, MIST_AMOUNT = 22;
 
 function loadWorld(i){
   wi = clamp(i, 0, WORLDS.length-1);
@@ -400,6 +402,7 @@ function loadWorld(i){
   DOOR = r.door; POOLS = r.pools;
   walkers=[]; parasols=[]; particles=[]; crankAnims={};
   savedCount=0; meltedCount=0; spawnT=0; spawnedN=0; stuckT=0;
+  mistCd=0; el.mistBtn.textContent='🌬 ready';
   mode='spin'; yaw=0; yawTarget=0; tiltT=0; tiltTarget=0; spun=false;
   recomputeWalk();
   el.saved.textContent=0; el.melted.textContent=0;
@@ -434,7 +437,7 @@ function openDoors(){
   mode='walk';
   el.goBtn.classList.add('hidden');
   G = graphAt(snapIndex(yawTarget), tiltTarget);
-  setStatus('⛱ tap tiles · 🌬 tap climbers · ⟲⇅ keep the path alive');
+  setStatus('⛱ tap tiles · 🌬 cold snap up top · ⟲⇅ keep the path alive');
   sfx.connect();
 }
 function finishWorld(){
@@ -456,6 +459,19 @@ function finishWorld(){
 }
 
 el.startBtn.addEventListener('click', ()=>{ el.modal.classList.add('hidden'); tone(500,.1,'triangle',.12); });
+el.mistBtn.addEventListener('click', ()=>{
+  if(mode!=='walk' || mistCd>0 || !walkers.length) return;
+  mistCd = MIST_CD;
+  sfx.fan(); sfx.save();
+  for(const w2 of walkers){
+    w2.heat = Math.max(0, w2.heat - MIST_AMOUNT);
+    const p = walkerScreen(w2);
+    for(let i=0;i<8;i++){ const a=i/8*TAU;
+      particles.push({sx:p.sx+Math.cos(a)*12, sy:p.sy-16+Math.sin(a)*8, vx:Math.cos(a+1.6)*50, vy:Math.sin(a+1.6)*34-10, life:.5, max:.5, color:'#DFF3FF', size:2.6});
+    }
+  }
+  setStatus('🌬 a merciful gust sweeps the world');
+});
 
 /* ---------- input: 2-axis orbit, taps for crank/valve/fan/parasol ---------- */
 let px0=0, py0=0, yaw0=0, tilt0=0, moved=0;
@@ -488,7 +504,6 @@ function tapAt(cx, cy){
   const wx = (cx - CW/2), wy = (cy - CH*0.46);
   if(tapCrank(wx, wy)) return;
   if(tapValve(wx, wy)) return;
-  if(mode==='walk' && fanAt(wx, wy)) return;
   plantParasol(wx, wy);
 }
 function tapCrank(wx, wy){
@@ -527,25 +542,6 @@ function tapValve(wx, wy){
   }
   return false;
 }
-function fanAt(wx, wy){
-  let best=null, bd=42*42;
-  for(const w of walkers){
-    const p = walkerScreen(w);
-    const d2 = (p.sx-wx)**2 + (p.sy-18-wy)**2;
-    if(d2<bd){ bd=d2; best=w; }
-  }
-  if(best && best.fanCd<=0){
-    best.heat = Math.max(0, best.heat-16);
-    best.fanCd = 1.0;
-    sfx.fan();
-    const p = walkerScreen(best);
-    for(let i=0;i<8;i++){ const a=i/8*TAU;
-      particles.push({sx:p.sx+Math.cos(a)*12, sy:p.sy-16+Math.sin(a)*8, vx:Math.cos(a+1.6)*50, vy:Math.sin(a+1.6)*34-10, life:.5, max:.5, color:'#DFF3FF', size:2.6});
-    }
-    return true;
-  }
-  return false;
-}
 function plantParasol(wx, wy){
   if(parasols.length >= W.parasols) return;
   let bt=null, bd=26*26;
@@ -566,7 +562,7 @@ function plantParasol(wx, wy){
 /* ---------- walkers: tile-based, re-routed on every snap ---------- */
 const SKIN=['#F6C9A0','#E8B48A','#C68B59','#8D5A3A'], SHIRT=['#8FB8DE','#A7D8C9','#E7C6E0','#F0E2B6','#B8C4E8'];
 function spawnWalker(){
-  walkers.push({ tile: TOPS.find(t=>keyOf(t)===keyOf(DOOR)) || DOOR, next:null, t:0, heat:0, fanCd:0, waiting:false,
+  walkers.push({ tile: TOPS.find(t=>keyOf(t)===keyOf(DOOR)) || DOOR, next:null, t:0, heat:0, waiting:false,
     speed:rand(.8,1.05), phase:rand(0,TAU), jig:rand(-6,6),
     skin:SKIN[Math.floor(Math.random()*SKIN.length)],
     shirt:SHIRT[Math.floor(Math.random()*SHIRT.length)],
@@ -586,6 +582,7 @@ function update(dt){
     tiltT += (tiltTarget-tiltT)*Math.min(1,dt*8);
   }
   for(const k in crankAnims) crankAnims[k] = Math.max(0, crankAnims[k] - dt*4);
+  if(mistCd > 0){ mistCd = Math.max(0, mistCd - dt); el.mistBtn.textContent = mistCd>0 ? '🌬 '+Math.ceil(mistCd)+'s' : '🌬 ready'; }
   updateParticles(dt);
   if(mode!=='walk') return;
 
@@ -595,7 +592,7 @@ function update(dt){
   let anyMoving = false;
   for(let i=walkers.length-1;i>=0;i--){
     const w = walkers[i];
-    w.fanCd -= dt; w.phase += dt*(w.waiting?2.5:9);
+    w.phase += dt*(w.waiting?2.5:9);
 
     const ws = walkerScreen(w);
     const underFall = FALLS.some(f=>!f.diverted && keyOf(f.tile)===keyOf(w.tile) && !w.next);
