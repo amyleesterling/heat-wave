@@ -528,17 +528,19 @@ canvas.addEventListener('pointermove', e=>{
   moved = Math.max(moved, Math.abs(dx), Math.abs(dy));
   // one gesture, one axis: whichever way the drag starts is the way it stays
   if(!axisLock && moved>10) axisLock = Math.abs(dx) >= Math.abs(dy) ? 'yaw' : 'tilt';
+  // you GRAB THE WORLD and turn it — the surface follows your finger,
+  // the camera never moves
   if(axisLock==='yaw'){
-    const nowMs = performance.now(), ny = yaw0 + dx*0.012;
+    const nowMs = performance.now(), ny = yaw0 - dx*0.012;
     yawVel = (ny - yaw) / Math.max(0.008, (nowMs - lastMoveTs)/1000);
     lastMoveTs = nowMs;
     yaw = ny;
   }
   else if(axisLock==='tilt'){
     if(W.noTilt){
-      tiltT = clamp(-dy*0.0012, 0, 0.08); // elastic: it leans, then springs back
+      tiltT = clamp(dy*0.0012, 0, 0.08); // elastic: it leans, then springs back
       setStatus('🧭 this world only spins sideways ⟲');
-    } else tiltT = clamp(tilt0 - dy*0.006, 0, 1);
+    } else tiltT = clamp(tilt0 + dy*0.006, 0, 1); // pull the near edge down to see the top
   }
   spun = spun || moved>30;
 });
