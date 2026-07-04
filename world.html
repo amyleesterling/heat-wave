@@ -81,11 +81,11 @@
 "use strict";
 /* ============================================================
    TINY WORLD — rotatable Escher-in-pastel dioramas.
-   Orthographic block worlds; drag to orbit with 90° snaps.
-   Walkability is computed from SCREEN adjacency after projection
-   (the Fez/Monument Valley trick). From world № 2 on, no single
-   view connects door to pool: rotate MID-WALK to open new seams
-   while the queue cooks.
+   TWO axes now: drag sideways to orbit (4 yaws) and drag up or
+   down to tilt between two camera elevations — 8 views total,
+   each with its own screen-space walk graph (the Fez/Monument
+   Valley trick). Plus rotor-cranks that spin sub-structures and
+   waterfalls that block tiles until diverted at a valve.
    ============================================================ */
 
 const canvas = document.getElementById('c');
@@ -115,6 +115,11 @@ function tone(f,d,type='sine',v=.14,slide=null,when=0){
 }
 const sfx = {
   snap(){ tone(300,.09,'triangle',.16); tone(450,.12,'triangle',.10,null,.05); },
+  tiltup(){ tone(360,.1,'triangle',.14,520); },
+  tiltdn(){ tone(520,.1,'triangle',.14,360); },
+  crank(){ tone(150,.12,'square',.11,80); tone(95,.1,'square',.08,null,.1); },
+  valve(){ tone(220,.14,'triangle',.12,140); tone(700,.08,'sine',.06,null,.12); },
+  buzz(){ tone(110,.2,'sawtooth',.07,70); },
   connect(){ [523,659,784].forEach((f,i)=>tone(f,.18,'sine',.12,null,i*.09)); },
   fan(){ tone(1200,.06,'triangle',.05,700); },
   save(){ tone(320,.1,'sine',.16,120); tone(660,.14,'sine',.11,null,.08); tone(880,.16,'sine',.1,null,.16); },
@@ -123,79 +128,166 @@ const sfx = {
 };
 
 /* ============================================================
-   WORLDS — each is a builder plus tuning. All share the same
-   world centre (3.5, 2.5) so the projection math holds.
+   WORLDS — builders share the world centre (3.5, 2.5).
+   add(x,y,z,mat,grp) — grp ties blocks to a rotor-crank.
+   Worlds may define cranks:[{px,pz,tag}] and falls:
+   [{top:{x,y,z}, tile:{x,y,z}, valve:{x,y,z}}].
    ============================================================ */
-let B = [], TOPS = [], occupiedSet = new Set(), DOOR = null, POOLS = [];
-const add = (x,y,z,m)=>B.push({x,y,z,m});
+let B = [], TOPS = [], DOOR = null, POOLS = [], CRANKS = [], FALLS = [];
+const add = (x,y,z,m,grp)=>B.push(grp ? {x,y,z,m,grp} : {x,y,z,m});
 const col = (x,z,h,m='stone')=>{ for(let y=0;y<h;y++) add(x,y,z,m); };
+function baseOffice(){ // door tower + deck A (x=1..3, walk tops at surf 2)
+  col(0,3,3,'office'); col(0,4,3,'office'); col(0,5,2,'office');
+  for(let x=1;x<=3;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
+}
 
 const WORLDS = [
   { name:'The Liquid Oasis', gated:true, count:5, quota:3, heat:13, parasols:2,
-    blurb:'<b>Drag to spin the world.</b> The path from the office door to the rooftop pool is broken… from most angles. Find the view where the walkways <i>agree</i>, then open the doors. <b>Tap a tile to plant a parasol ⛱ · tap a climber to fan 🌬.</b>',
+    blurb:'<b>Drag sideways to spin the world.</b> Find the view where the broken walkways <i>agree</i>, then open the doors. <b>Tap a tile to plant a parasol ⛱ · tap a climber to fan 🌬.</b>',
     build(){
-      col(0,4,3,'office'); col(0,3,3,'office'); col(0,5,2,'office');
-      for(let x=1;x<=4;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
+      baseOffice(); col(4,4,1,'stone'); add(4,1,4,'walk');
       for(let x=2;x<=5;x++){ col(x,0,3,'stone'); add(x,3,0,'walk'); }
       col(5,1,3,'stone'); add(5,3,1,'walk');
       col(5,2,3,'stone'); add(5,3,2,'walk');
-      col(6,0,3,'stone'); col(6,1,3,'stone');
-      add(6,3,0,'pool'); add(6,3,1,'pool');
-      col(7,0,3,'stone'); col(7,1,3,'stone');
-      add(7,3,0,'pool'); add(7,3,1,'pool');
+      col(6,0,3,'stone'); col(6,1,3,'stone'); add(6,3,0,'pool'); add(6,3,1,'pool');
+      col(7,0,3,'stone'); col(7,1,3,'stone'); add(7,3,0,'pool'); add(7,3,1,'pool');
       col(6,4,1,'accent'); add(6,1,4,'garden');
       col(2,2,2,'accent'); add(2,2,2,'garden');
       col(7,2,3,'accent'); add(7,3,2,'garden');
       return { door:{x:1,y:1,z:4}, pools:[{x:6,y:3,z:0},{x:6,y:3,z:1},{x:7,y:3,z:0},{x:7,y:3,z:1}] };
     } },
-  { name:'The Rooftop Was Upstairs', gated:false, count:5, quota:3, heat:4.5, parasols:2,
-    blurb:'No single view connects the door to the pool. <b>Open the doors anyway</b> — walk them across the first seam, then <b>spin the world while they wait</b> to open the next. They keep cooking while you turn. The pool, it turns out, was on the office roof all along.',
+  { name:'The Rooftop Was Upstairs', gated:false, noTilt:true, count:5, quota:3, heat:4.5, parasols:2,
+    blurb:'No single view connects door to pool. <b>Open the doors anyway</b> — cross the first seam, then <b>spin while they wait</b> to open the next. The pool was on the office roof all along.',
     build(){
-      // office tower — the pool deck will sit on its roof
       col(0,3,3,'office'); col(0,4,3,'office'); col(0,5,3,'office');
-      // door deck A: z=4, tops at surf 2
       for(let x=1;x<=3;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
-      // floating middle deck B: (2..4, 3, 2) on one slim column
       col(3,2,3,'stone');
       for(let x=2;x<=4;x++) add(x,3,2,'walk');
-      // pool deck C on the office roof: (0, 3, 3..5)
       add(0,3,3,'walk'); add(0,3,4,'pool'); add(0,3,5,'pool');
-      // dressing
       col(6,1,2,'accent'); add(6,2,1,'garden');
       col(7,4,1,'accent'); add(7,1,4,'garden');
       return { door:{x:1,y:1,z:4}, pools:[{x:0,y:3,z:4},{x:0,y:3,z:5}] };
     } },
-  { name:'The Long Way Around', gated:false, count:6, quota:4, heat:5.5, parasols:1,
-    blurb:'Two seams, two different faces of the world, one parasol, and a hotter sun. Stage the crowd on the floating deck, spin, and pray. HR calls this <i>a growth opportunity</i>.',
+  { name:'The Long Way Around', gated:false, noTilt:true, count:6, quota:4, heat:5.5, parasols:1,
+    blurb:'Two seams on two different faces, one parasol, hotter sun. Stage the crowd on the floating deck, spin, and pray. HR calls this <i>a growth opportunity</i>.',
     build(){
       col(0,3,3,'office'); col(0,4,3,'office'); col(0,5,2,'office');
-      // door deck A: z=4
       for(let x=1;x<=3;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
-      // floating deck B: (1..3, 3, 5) — behind and above the door deck
       col(2,5,3,'stone');
       for(let x=1;x<=3;x++) add(x,3,5,'walk');
-      // pool deck C: (5..7, 3, 5)
       col(6,5,3,'stone');
       add(5,3,5,'walk'); add(6,3,5,'pool'); add(7,3,5,'pool');
-      // dressing
       col(5,1,2,'accent'); add(5,2,1,'garden');
       col(7,0,1,'accent'); add(7,1,0,'garden');
       return { door:{x:1,y:1,z:4}, pools:[{x:6,y:3,z:5},{x:7,y:3,z:5}] };
     } },
+  { name:'The Overlook', gated:true, count:5, quota:3, heat:12, parasols:2,
+    blurb:'A new axis: <b>drag UP or DOWN to tilt the world.</b> From the ordinary angle this pool is unreachable — but look at it <i>steeply</i> enough…',
+    build(){
+      baseOffice();
+      col(5,2,2,'stone');
+      add(4,2,2,'walk'); add(5,2,2,'pool'); add(6,2,2,'pool');
+      col(6,0,1,'accent'); add(6,1,0,'garden');
+      col(1,1,1,'accent'); add(1,1,1,'garden');
+      return { door:{x:1,y:1,z:4}, pools:[{x:5,y:2,z:2},{x:6,y:2,z:2}] };
+    } },
+  { name:'The Crank', gated:true, count:5, quota:3, heat:11, parasols:2,
+    blurb:'That bridge is real, physical, and pointing the wrong way. <b>Tap the bolted slab to crank it 90°.</b> No spinning required — though it never hurts to look around.',
+    cranks:[{px:5, pz:4, tag:'b1'}],
+    build(){
+      baseOffice();
+      // rotor bridge: 3 floating slabs, initially perpendicular to the path
+      add(5,1,3,'walk','b1'); add(5,1,4,'crank','b1'); add(5,1,5,'walk','b1');
+      // landing deck + pool
+      col(7,4,1,'stone'); add(7,1,4,'walk');
+      col(7,3,1,'stone'); add(7,1,3,'pool');
+      col(7,2,1,'stone'); add(7,1,2,'pool');
+      col(2,1,2,'accent'); add(2,2,1,'garden');
+      return { door:{x:1,y:1,z:4}, pools:[{x:7,y:1,z:3},{x:7,y:1,z:2}] };
+    } },
+  { name:'Water Feature', gated:true, count:5, quota:3, heat:11, parasols:2,
+    blurb:'The path is fine. The decorative waterfall crashing onto it is not. <b>Tap the valve wheel to divert it</b> — standing under it is refreshing but not productive.',
+    falls:[{ top:{x:5,y:3,z:4}, tile:{x:5,y:1,z:4}, valve:{x:3,y:1,z:2} }],
+    build(){
+      baseOffice();
+      for(let x=4;x<=6;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
+      col(7,4,1,'stone'); add(7,1,4,'pool');
+      col(7,3,1,'stone'); add(7,1,3,'pool');
+      add(5,3,4,'pool'); // the floating fountain cube
+      col(3,2,1,'accent'); add(3,1,2,'valve');
+      col(6,1,1,'accent'); add(6,1,1,'garden');
+      return { door:{x:1,y:1,z:4}, pools:[{x:7,y:1,z:4},{x:7,y:1,z:3}] };
+    } },
+  { name:'Plumbing Issue', gated:false, noTilt:true, count:5, quota:3, heat:4.5, parasols:2,
+    blurb:'The rooftop route again — but Facilities installed a water feature directly on the walkway out. <b>Divert the fall at the valve</b>, cross the first seam, spin, and finish the climb.',
+    falls:[{ top:{x:2,y:4,z:4}, tile:{x:2,y:1,z:4}, valve:{x:6,y:1,z:1} }],
+    build(){
+      col(0,3,3,'office'); col(0,4,3,'office'); col(0,5,3,'office');
+      for(let x=1;x<=3;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
+      col(3,2,3,'stone');
+      for(let x=2;x<=4;x++) add(x,3,2,'walk');
+      add(0,3,3,'walk'); add(0,3,4,'pool'); add(0,3,5,'pool');
+      add(2,4,4,'pool'); // fountain cube raining on the walkway
+      col(6,1,1,'accent'); add(6,1,1,'valve');
+      col(7,4,1,'accent'); add(7,1,4,'garden');
+      return { door:{x:1,y:1,z:4}, pools:[{x:0,y:3,z:4},{x:0,y:3,z:5}] };
+    } },
+  { name:'High & Dry', gated:true, count:5, quota:3, heat:10, parasols:2,
+    blurb:'The steep view again — but the ledge is under a waterfall. <b>Valve first, then tilt.</b> Two axes, one wet ledge, five believers.',
+    falls:[{ top:{x:4,y:5,z:2}, tile:{x:4,y:2,z:2}, valve:{x:2,y:1,z:1} }],
+    build(){
+      baseOffice();
+      col(5,2,2,'stone');
+      add(4,2,2,'walk'); add(5,2,2,'pool'); add(6,2,2,'pool');
+      add(4,5,2,'pool'); // fountain cube high above the ledge
+      col(2,1,1,'accent'); add(2,1,1,'valve');
+      col(6,0,1,'accent'); add(6,1,0,'garden');
+      return { door:{x:1,y:1,z:4}, pools:[{x:5,y:2,z:2},{x:6,y:2,z:2}] };
+    } },
+  { name:'Rush Hour', gated:false, noTilt:true, count:8, quota:6, heat:6, parasols:1,
+    blurb:'Eight coworkers, one parasol, a waterfall on the staging deck, and two seams on opposite faces. This is the quarterly all-hands of tiny worlds.',
+    falls:[{ top:{x:3,y:6,z:5}, tile:{x:3,y:3,z:5}, valve:{x:4,y:1,z:0} }],
+    build(){
+      col(0,3,3,'office'); col(0,4,3,'office'); col(0,5,2,'office');
+      for(let x=1;x<=3;x++){ col(x,4,1,'stone'); add(x,1,4,'walk'); }
+      col(2,5,3,'stone');
+      for(let x=1;x<=3;x++) add(x,3,5,'walk');
+      col(6,5,3,'stone');
+      add(5,3,5,'walk'); add(6,3,5,'pool'); add(7,3,5,'pool');
+      add(3,6,5,'pool'); // high fountain over the staging deck
+      col(4,0,1,'accent'); add(4,1,0,'valve');
+      col(5,1,2,'accent'); add(5,2,1,'garden');
+      return { door:{x:1,y:1,z:4}, pools:[{x:6,y:3,z:5},{x:7,y:3,z:5}] };
+    } },
+  { name:'Peak Liquidity Summit', gated:true, count:6, quota:5, heat:10, parasols:2,
+    blurb:'The finale: crank the bridge, divert the fall, save <b>5 of 6</b> — including, reportedly, someone from Leadership. The pool is earned, not given.',
+    cranks:[{px:5, pz:4, tag:'b1'}],
+    falls:[{ top:{x:7,y:4,z:4}, tile:{x:7,y:1,z:4}, valve:{x:1,y:1,z:2} }],
+    build(){
+      baseOffice();
+      add(5,1,3,'walk','b1'); add(5,1,4,'crank','b1'); add(5,1,5,'walk','b1');
+      col(7,4,1,'stone'); add(7,1,4,'walk');
+      col(7,3,1,'stone'); add(7,1,3,'pool');
+      col(7,2,1,'stone'); add(7,1,2,'pool');
+      add(7,4,4,'pool'); // fountain over the landing
+      col(1,2,1,'accent'); add(1,1,2,'valve');
+      col(3,1,2,'accent'); add(3,2,1,'garden');
+      return { door:{x:1,y:1,z:4}, pools:[{x:7,y:1,z:3},{x:7,y:1,z:2}] };
+    } },
 ];
 let wi = 0;
 
-/* ---------- projection ---------- */
-const TILE = 34, HGT = 34*0.5;
-let yaw = 0, yawTarget = 0, dragging=false, spun=false;
+/* ---------- projection: yaw + tilt ---------- */
+const TILE = 34;
+let yaw = 0, yawTarget = 0, tiltT = 0, tiltTarget = 0, dragging=false, spun=false;
 
-function project(x,y,z,cy=yaw){
+function project(x,y,z,cy=yaw,tt=tiltT){
   const dx = x-3.5, dz = z-2.5;
   const rx = dx*Math.cos(cy) - dz*Math.sin(cy);
   const rz = dx*Math.sin(cy) + dz*Math.cos(cy);
   return {
     sx: (rx - rz) * TILE,
-    sy: (rx + rz) * TILE*0.5 - y*HGT,
+    sy: (rx + rz) * TILE*0.5 - y * TILE*0.5 * (1+tt),
     depth: rx + rz + y*0.001,
   };
 }
@@ -205,15 +297,30 @@ const snapIndex = a => {
   for(let i=0;i<4;i++){ const d=Math.abs(Math.atan2(Math.sin(a-SNAPS[i]),Math.cos(a-SNAPS[i]))); if(d<bd){bd=d;best=i;} }
   return best;
 };
-const settled = () => !dragging && Math.abs(yaw - yawTarget) < 0.03;
+const settled = () => !dragging && Math.abs(yaw-yawTarget) < 0.03 && Math.abs(tiltT-tiltTarget) < 0.03;
 
-/* ---------- screen-space walk graph (the Escher rule) ---------- */
+/* ---------- walkable tops (crank + waterfall aware) ---------- */
 const keyOf = t => `${t.x},${t.y},${t.z}`;
-function graphAt(idx){
-  const a = SNAPS[idx];
+const WALKMATS = new Set(['walk','pool','crank']);
+function blockedKeys(){
+  const s = new Set();
+  for(const f of FALLS) if(!f.diverted) s.add(`${f.tile.x},${f.tile.y},${f.tile.z}`);
+  return s;
+}
+function recomputeWalk(){
+  const occ = new Set(B.map(keyOf));
+  const blocked = blockedKeys();
+  TOPS = B.filter(b => WALKMATS.has(b.m) && !occ.has(`${b.x},${b.y+1},${b.z}`) && !blocked.has(keyOf(b)));
+  buildPotential();
+  G = graphAt(snapIndex(yawTarget), tiltTarget);
+}
+
+/* ---------- screen-space walk graph, per (yaw, tilt) view ---------- */
+function graphAt(yawIdx, tiltIdx){
+  const a = SNAPS[yawIdx], m = 1 + tiltIdx;
   const cells = new Map();
   for(const t of TOPS){
-    const p = project(t.x, t.y+1, t.z, a);
+    const p = project(t.x, t.y+1, t.z, a, tiltIdx);
     const u = Math.round(p.sx / TILE), v = Math.round(p.sy / (TILE*0.5));
     const k = u+','+v;
     const prev = cells.get(k);
@@ -224,25 +331,24 @@ function graphAt(idx){
   const edges = new Map(nodes.map(n=>[keyOf(n.t), []]));
   for(const n of nodes){
     for(const [du,dv] of [[1,1],[1,-1],[-1,1],[-1,-1]]){
-      const m = byUV.get((n.u+du)+','+(n.v+dv));
-      if(m) edges.get(keyOf(n.t)).push(m.t);
+      const q = byUV.get((n.u+du)+','+(n.v+dv));
+      if(q) edges.get(keyOf(n.t)).push(q.t);
     }
   }
   return { edges, visible:new Set(nodes.map(n=>keyOf(n.t))) };
 }
-let G = null;        // graph at the current snapped view
-let POT = new Map(); // per-tile hop distance to a pool over the UNION of all
-                     // four views' graphs — "how far from winning, counting
-                     // future rotations". Escher-safe, unlike world distance.
+let G = null;
+let POT = new Map(); // hop distance to pool over the union of all 8 views
 function buildPotential(){
   const union = new Map(TOPS.map(t=>[keyOf(t), new Set()]));
-  for(let v=0; v<4; v++){
-    const g = graphAt(v);
+  const tmax = W.noTilt ? 1 : 2;
+  for(let yv=0; yv<4; yv++) for(let tv=0; tv<tmax; tv++){
+    const g = graphAt(yv, tv);
     for(const [k, es] of g.edges) for(const nb of es) union.get(k).add(keyOf(nb));
   }
   POT = new Map();
   const q = [];
-  for(const p of POOLS){ POT.set(keyOf(p), 0); q.push(keyOf(p)); }
+  for(const p of POOLS){ if(union.has(keyOf(p))){ POT.set(keyOf(p), 0); q.push(keyOf(p)); } }
   while(q.length){
     const k = q.shift(), d = POT.get(k);
     for(const [k2, es] of union)
@@ -267,14 +373,9 @@ function routeFrom(tile, allowFrontier=false){
     }
   }
   if(!allowFrontier) return null;
-  // no full route in this view — advance to the reachable tile with the best
-  // potential, staging the crowd at the broken seam for the next rotation
   const pot = t => POT.has(keyOf(t)) ? POT.get(keyOf(t)) : Infinity;
-  let best=null, bd=pot(tile) - 0.5; // only move if strictly better
-  for(const t of order){
-    const d = pot(t);
-    if(d < bd){ bd=d; best=t; }
-  }
+  let best=null, bd=pot(tile) - 0.5;
+  for(const t of order){ const d = pot(t); if(d < bd){ bd=d; best=t; } }
   if(!best) return null;
   const path=[best]; let k=prev.get(keyOf(best));
   while(k){ path.unshift(k); k=prev.get(keyOf(k)); }
@@ -286,22 +387,21 @@ const $ = s=>document.querySelector(s);
 const el = { saved:$('#saved'), paras:$('#paras'), melted:$('#melted'), quota:$('#quota'), status:$('#status'),
              goBtn:$('#goBtn'), modal:$('#modal'), startBtn:$('#startBtn'),
              mKicker:$('#mKicker'), mName:$('#mName'), mBlurb:$('#mBlurb') };
-let mode='spin';            // spin | walk | done
+let mode='spin';
 let walkers=[], savedCount=0, meltedCount=0, spawnT=0, spawnedN=0, particles=[], parasols=[];
-let W = WORLDS[0];
+let W = WORLDS[0], crankAnims = {}, stuckT = 0;
 
 function loadWorld(i){
   wi = clamp(i, 0, WORLDS.length-1);
   W = WORLDS[wi];
-  B = [];
+  B = []; CRANKS = (W.cranks||[]).map(c=>({...c}));
+  FALLS = (W.falls||[]).map(f=>({...f, diverted:false}));
   const r = W.build.call(null);
   DOOR = r.door; POOLS = r.pools;
-  occupiedSet = new Set(B.map(keyOf));
-  TOPS = B.filter(b => (b.m==='walk'||b.m==='pool') && !occupiedSet.has(`${b.x},${b.y+1},${b.z}`));
-  buildPotential();
-  walkers=[]; parasols=[]; particles=[];
-  savedCount=0; meltedCount=0; spawnT=0; spawnedN=0;
-  mode='spin'; yaw=0; yawTarget=0; spun=false; G=null;
+  walkers=[]; parasols=[]; particles=[]; crankAnims={};
+  savedCount=0; meltedCount=0; spawnT=0; spawnedN=0; stuckT=0;
+  mode='spin'; yaw=0; yawTarget=0; tiltT=0; tiltTarget=0; spun=false;
+  recomputeWalk();
   el.saved.textContent=0; el.melted.textContent=0;
   el.quota.textContent=W.quota; el.paras.textContent=W.parasols;
   el.mKicker.textContent = `Tiny World № ${wi+1} of ${WORLDS.length}`;
@@ -317,25 +417,24 @@ function loadWorld(i){
 function setStatus(msg){ el.status.textContent = msg; }
 function refreshGate(){
   if(mode!=='spin') return;
-  G = graphAt(snapIndex(yawTarget));
+  G = graphAt(snapIndex(yawTarget), tiltTarget);
   const full = routeFrom(DOOR);
   if(W.gated){
     el.goBtn.disabled = !full;
     el.goBtn.textContent = full ? '🚪 OPEN THE DOORS' : '🧩 FIND THE WAY';
-    setStatus(full ? 'the walkways agree ✨' : (spun ? 'not from this angle…' : 'spin the world 🌍'));
+    setStatus(full ? 'the walkways agree ✨' : (spun ? 'not like this… spin ⟲ or tilt ⇅' : 'spin the world 🌍'));
   } else {
     el.goBtn.disabled = false;
     el.goBtn.textContent = '🚪 OPEN THE DOORS';
-    setStatus(full ? 'the walkways agree ✨' : 'no through-path… you’ll rotate mid-walk 🌀');
+    setStatus(full ? 'the walkways agree ✨' : 'no through-path yet — you’ll solve it mid-walk 🌀');
   }
 }
 function openDoors(){
   if(mode!=='spin' || el.goBtn.disabled) return;
   mode='walk';
   el.goBtn.classList.add('hidden');
-  G = graphAt(snapIndex(yawTarget));
-  setStatus(W.gated ? 'tap tiles to plant ⛱ · tap climbers to fan 🌬'
-                    : 'walk them to the seam, then SPIN 🌀 (they keep cooking)');
+  G = graphAt(snapIndex(yawTarget), tiltTarget);
+  setStatus('⛱ tap tiles · 🌬 tap climbers · ⟲⇅ keep the path alive');
   sfx.connect();
 }
 function finishWorld(){
@@ -344,33 +443,31 @@ function finishWorld(){
   if(win){
     sfx.win();
     const last = wi === WORLDS.length-1;
-    setStatus(last ? `☀️ ${savedCount}/${W.count} — all ${WORLDS.length} tiny worlds conquered!`
-                   : `☀️ ${savedCount}/${W.count} reached the water!`);
+    setStatus(last ? `☀️ all ${WORLDS.length} tiny worlds conquered. legend.` : `☀️ ${savedCount}/${W.count} reached the water!`);
     el.goBtn.textContent = last ? '↻ FROM THE TOP' : '🌍 NEXT WORLD';
-    el.goBtn.disabled = false;
-    el.goBtn.classList.remove('hidden');
     el.goBtn.onclick = ()=>loadWorld(last ? 0 : wi+1);
   } else {
     setStatus('🫠 the oasis remains theoretical…');
     el.goBtn.textContent = '↻ SPIN AGAIN';
-    el.goBtn.disabled = false;
-    el.goBtn.classList.remove('hidden');
     el.goBtn.onclick = ()=>loadWorld(wi);
   }
+  el.goBtn.disabled = false;
+  el.goBtn.classList.remove('hidden');
 }
 
 el.startBtn.addEventListener('click', ()=>{ el.modal.classList.add('hidden'); tone(500,.1,'triangle',.12); });
 
-/* ---------- input: drag to orbit, tap to fan / plant ---------- */
-let px0=0, py0=0, yaw0=0, moved=0;
+/* ---------- input: 2-axis orbit, taps for crank/valve/fan/parasol ---------- */
+let px0=0, py0=0, yaw0=0, tilt0=0, moved=0;
 canvas.addEventListener('pointerdown', e=>{
-  dragging=true; moved=0; px0=e.clientX; py0=e.clientY; yaw0=yaw;
+  dragging=true; moved=0; px0=e.clientX; py0=e.clientY; yaw0=yaw; tilt0=tiltT;
 });
 canvas.addEventListener('pointermove', e=>{
   if(!dragging) return;
-  const dx = e.clientX-px0;
-  moved = Math.max(moved, Math.abs(dx), Math.abs(e.clientY-py0));
+  const dx = e.clientX-px0, dy = e.clientY-py0;
+  moved = Math.max(moved, Math.abs(dx), Math.abs(dy));
   yaw = yaw0 + dx*0.012;
+  if(!W.noTilt) tiltT = clamp(tilt0 - dy*0.006, 0, 1);
   spun = spun || moved>30;
 });
 addEventListener('pointerup', e=>{
@@ -379,16 +476,56 @@ addEventListener('pointerup', e=>{
   if(moved < 8){ tapAt(e.clientX, e.clientY); }
   const idx = snapIndex(yaw);
   yawTarget = SNAPS[idx] + Math.round((yaw - SNAPS[idx])/TAU)*TAU;
-  sfx.snap();
+  const newTilt = tiltT > 0.5 ? 1 : 0;
+  if(newTilt !== tiltTarget){ tiltTarget = newTilt; newTilt ? sfx.tiltup() : sfx.tiltdn(); }
+  else if(moved >= 8) sfx.snap();
   if(mode==='spin') refreshGate();
-  else if(mode==='walk'){ G = graphAt(idx); }
+  else G = graphAt(idx, tiltTarget);
 });
 
 function tapAt(cx, cy){
   if(mode!=='walk' && mode!=='spin') return;
   const wx = (cx - CW/2), wy = (cy - CH*0.46);
+  if(tapCrank(wx, wy)) return;
+  if(tapValve(wx, wy)) return;
   if(mode==='walk' && fanAt(wx, wy)) return;
   plantParasol(wx, wy);
+}
+function tapCrank(wx, wy){
+  for(const c of CRANKS){
+    const tiles = B.filter(b=>b.grp===c.tag);
+    const hit = tiles.some(b=>{
+      const p = project(b.x+0.5, b.y+1, b.z+0.5);
+      return (p.sx-wx)**2 + (p.sy-wy)**2 < 34*34;
+    });
+    if(!hit) continue;
+    const occupied = walkers.some(w =>
+      (w.tile.grp===c.tag) || (w.next && w.next.grp===c.tag));
+    if(occupied){ sfx.buzz(); setStatus('there are PEOPLE on that.'); return true; }
+    for(const b of tiles){
+      const nx = c.px + (b.z - c.pz), nz = c.pz - (b.x - c.px);
+      b.x = nx; b.z = nz;
+    }
+    crankAnims[c.tag] = Math.PI/2;
+    sfx.crank();
+    recomputeWalk();
+    if(mode==='spin') refreshGate();
+    return true;
+  }
+  return false;
+}
+function tapValve(wx, wy){
+  for(const f of FALLS){
+    const p = project(f.valve.x+0.5, f.valve.y+1, f.valve.z+0.5);
+    if((p.sx-wx)**2 + (p.sy-wy)**2 >= 30*30) continue;
+    f.diverted = !f.diverted;
+    sfx.valve();
+    setStatus(f.diverted ? 'waterfall diverted 💧→' : 'waterfall restored 💧');
+    recomputeWalk();
+    if(mode==='spin') refreshGate();
+    return true;
+  }
+  return false;
 }
 function fanAt(wx, wy){
   let best=null, bd=42*42;
@@ -413,7 +550,7 @@ function plantParasol(wx, wy){
   if(parasols.length >= W.parasols) return;
   let bt=null, bd=26*26;
   for(const t of TOPS){
-    if(t.m!=='walk') continue;
+    if(t.m==='pool') continue;
     if(parasols.some(p=>p.t===t)) continue;
     const p = project(t.x, t.y+1, t.z);
     const d2 = (p.sx-wx)**2 + (p.sy-wy)**2;
@@ -422,13 +559,14 @@ function plantParasol(wx, wy){
   if(!bt) return;
   parasols.push({ t: bt });
   el.paras.textContent = W.parasols - parasols.length;
+  setStatus(`parasol planted ⛱ (${W.parasols - parasols.length} left)`);
   tone(340,.09,'triangle',.18); tone(520,.12,'triangle',.12,null,.06);
 }
 
 /* ---------- walkers: tile-based, re-routed on every snap ---------- */
 const SKIN=['#F6C9A0','#E8B48A','#C68B59','#8D5A3A'], SHIRT=['#8FB8DE','#A7D8C9','#E7C6E0','#F0E2B6','#B8C4E8'];
 function spawnWalker(){
-  walkers.push({ tile: DOOR, next:null, t:0, heat:0, fanCd:0, waiting:false,
+  walkers.push({ tile: TOPS.find(t=>keyOf(t)===keyOf(DOOR)) || DOOR, next:null, t:0, heat:0, fanCd:0, waiting:false,
     speed:rand(.8,1.05), phase:rand(0,TAU), jig:rand(-6,6),
     skin:SKIN[Math.floor(Math.random()*SKIN.length)],
     shirt:SHIRT[Math.floor(Math.random()*SHIRT.length)],
@@ -443,24 +581,30 @@ function walkerScreen(w){
 }
 
 function update(dt){
-  if(!dragging) yaw += (yawTarget-yaw)*Math.min(1,dt*8);
+  if(!dragging){
+    yaw += (yawTarget-yaw)*Math.min(1,dt*8);
+    tiltT += (tiltTarget-tiltT)*Math.min(1,dt*8);
+  }
+  for(const k in crankAnims) crankAnims[k] = Math.max(0, crankAnims[k] - dt*4);
   updateParticles(dt);
   if(mode!=='walk') return;
 
   if(spawnedN < W.count){ spawnT -= dt; if(spawnT<=0){ spawnWalker(); spawnT = 1.6; } }
 
   const canMove = settled();
+  let anyMoving = false;
   for(let i=walkers.length-1;i>=0;i--){
     const w = walkers[i];
     w.fanCd -= dt; w.phase += dt*(w.waiting?2.5:9);
 
-    // heat never stops — waiting at a seam is exactly as sweaty as it sounds
     const ws = walkerScreen(w);
-    const shaded = parasols.some(pp=>{
+    const underFall = FALLS.some(f=>!f.diverted && keyOf(f.tile)===keyOf(w.tile) && !w.next);
+    const shaded = underFall || parasols.some(pp=>{
       const q = project(pp.t.x, pp.t.y+1, pp.t.z);
       return (q.sx-ws.sx)**2 + (q.sy-ws.sy)**2 < (TILE*1.15)**2;
     });
-    w.heat += W.heat * (shaded ? 0.2 : 1) * dt;
+    if(underFall) w.heat = 0; // drenched. refreshed. not going anywhere.
+    else w.heat += W.heat * (shaded ? 0.2 : 1) * dt;
     if(w.heat>=100){
       meltedCount++; el.melted.textContent=meltedCount;
       sfx.melt();
@@ -469,8 +613,9 @@ function update(dt){
     }
 
     if(w.next){
-      if(canMove || w.t>0){ // finish a step even if the world turned mid-stride
+      if(canMove || w.t>0){
         w.t += dt * w.speed * 1.1;
+        anyMoving = true;
         if(w.t>=1){
           w.tile = w.next; w.next = null; w.t = 0;
           if(POOLS.some(p=>keyOf(p)===keyOf(w.tile))){
@@ -488,13 +633,18 @@ function update(dt){
     } else if(canMove){
       const route = routeFrom(w.tile, true);
       if(route && route.length>1){
-        // don't pile onto a tile someone is already walking toward
-        const takken = walkers.some(o=>o!==w && ((o.next && keyOf(o.next)===keyOf(route[1])) || (!o.next && keyOf(o.tile)===keyOf(route[1]))));
-        if(!takken){ w.next = route[1]; w.t = 0; w.waiting = false; }
+        const taken = walkers.some(o=>o!==w && ((o.next && keyOf(o.next)===keyOf(route[1])) || (!o.next && keyOf(o.tile)===keyOf(route[1]))));
+        if(!taken){ w.next = route[1]; w.t = 0; w.waiting = false; anyMoving = true; }
         else w.waiting = true;
       } else w.waiting = true;
     }
   }
+
+  // hardening: if the whole crowd is stranded, say so instead of looking broken
+  if(walkers.length>0 && !anyMoving && canMove){
+    stuckT += dt;
+    if(stuckT > 1.6){ setStatus('no route from this angle — spin ⟲ tilt ⇅ crank bridges, divert falls'); stuckT = -3; }
+  } else if(anyMoving) stuckT = 0;
 
   if(spawnedN>=W.count && walkers.length===0 && mode==='walk') finishWorld();
 }
@@ -507,7 +657,7 @@ function updateParticles(dt){
 }
 
 /* ============================================================
-   RENDER — pastel void, floating island, flat-shaded blocks
+   RENDER
    ============================================================ */
 const MATS = {
   stone:  { top:'#F2D8B8', left:'#DBA97E', right:'#C08558' },
@@ -516,12 +666,29 @@ const MATS = {
   office: { top:'#E89B82', left:'#C96F5C', right:'#A85546' },
   accent: { top:'#CBAED6', left:'#A886BC', right:'#8A6A9E' },
   garden: { top:'#A7D8A0', left:'#7FB278', right:'#639260' },
+  crank:  { top:'#F0C987', left:'#D3A55C', right:'#B98A45' },
+  valve:  { top:'#9BC7DE', left:'#6FA3C0', right:'#587F9C' },
 };
 
+function groupSpin(b){
+  // residual crank animation: rotate the block around its pivot
+  if(!b.grp || !crankAnims[b.grp]) return null;
+  const c = CRANKS.find(k=>k.tag===b.grp);
+  return c ? { cx:c.px+0.5, cz:c.pz+0.5, a:crankAnims[b.grp] } : null;
+}
 function drawBlock(b, bobY){
   const cx = CW/2, cy = CH*0.46 + bobY;
   const m = MATS[b.m] || MATS.stone;
-  const corner = (ox,oz,y_)=>{ const q = project(b.x+ox, y_, b.z+oz); return [cx+q.sx, cy+q.sy]; };
+  const gs = groupSpin(b);
+  const corner = (ox,oz,y_)=>{
+    let X = b.x+ox, Z = b.z+oz;
+    if(gs){ // rotate corner by residual angle around pivot (counter to the snap)
+      const dx = X-gs.cx, dz = Z-gs.cz, ca = Math.cos(gs.a), sa = Math.sin(gs.a);
+      X = gs.cx + dx*ca - dz*sa; Z = gs.cz + dx*sa + dz*ca;
+    }
+    const q = project(X, y_, Z);
+    return [cx+q.sx, cy+q.sy];
+  };
   const t1=corner(0,0,b.y+1), t2=corner(1,0,b.y+1), t3=corner(1,1,b.y+1), t4=corner(0,1,b.y+1);
   const b1=corner(0,0,b.y),   b2=corner(1,0,b.y),   b3=corner(1,1,b.y),   b4=corner(0,1,b.y);
   const poly = (pts,fill)=>{ ctx.fillStyle=fill; ctx.strokeStyle=fill; ctx.lineWidth=1;
@@ -540,24 +707,72 @@ function drawBlock(b, bobY){
     poly(f.pts, (rxn - rzn) > 0 ? m.right : m.left);
   }
   poly([t1,t2,t3,t4], m.top);
+  const mx=(t1[0]+t3[0])/2, my=(t1[1]+t3[1])/2;
   if(b.m==='pool'){
     ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=1.6;
-    const mx=(t1[0]+t3[0])/2, my=(t1[1]+t3[1])/2, ph=(performance.now()/900 + b.x + b.z)%1;
+    const ph=(performance.now()/900 + b.x + b.z)%1;
     ctx.globalAlpha = .3+.4*Math.sin(ph*Math.PI);
     ctx.beginPath(); ctx.moveTo(mx-10, my+(ph-.5)*8); ctx.quadraticCurveTo(mx, my+2+(ph-.5)*8, mx+10, my+(ph-.5)*8); ctx.stroke();
     ctx.globalAlpha = 1;
   }
   if(b.m==='garden'){
-    const mx=(t1[0]+t3[0])/2, my=(t1[1]+t3[1])/2;
     ctx.fillStyle='#FF8FAF';
     for(const [fx,fy] of [[-6,-2],[4,-4],[0,3]]){
       ctx.beginPath(); ctx.arc(mx+fx, my+fy, 2.4, 0, TAU); ctx.fill();
     }
   }
+  if(b.m==='crank'){ // bolt + rotation affordance
+    ctx.fillStyle='#8A6230';
+    ctx.beginPath(); ctx.ellipse(mx, my, 5.5, 3.4, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle='rgba(138,98,48,.8)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.ellipse(mx, my, 11, 6.8, 0, .6, TAU-.9); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(mx+9, my-4.4); ctx.lineTo(mx+13, my-6); ctx.lineTo(mx+12, my-1.4); ctx.closePath();
+    ctx.fillStyle='rgba(138,98,48,.8)'; ctx.fill();
+  }
+  if(b.m==='valve'){ // wheel
+    ctx.strokeStyle='#3E627C'; ctx.lineWidth=2.4;
+    ctx.beginPath(); ctx.ellipse(mx, my, 8, 5, 0, 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(mx-8,my); ctx.lineTo(mx+8,my); ctx.moveTo(mx,my-5); ctx.lineTo(mx,my+5); ctx.stroke();
+    const pulse = 0.3+Math.sin(performance.now()/300)*0.2;
+    ctx.strokeStyle=`rgba(255,255,255,${pulse})`;
+    ctx.beginPath(); ctx.ellipse(mx, my, 12, 7.5, 0, 0, TAU); ctx.stroke();
+  }
   if(b.m==='office' && b.y===0 && DOOR && b.z===DOOR.z && Math.abs(b.x-DOOR.x)===1){
     const dm = [(t2[0]+b3[0]+t3[0]+b2[0])/4, (t2[1]+b3[1]+t3[1]+b2[1])/4];
     ctx.fillStyle='#7E4638';
     ctx.beginPath(); ctx.ellipse(dm[0], dm[1]+3, 6.5, 9, 0, 0, TAU); ctx.fill();
+  }
+}
+
+function drawFalls(bobY, t){
+  const cx = CW/2, cy = CH*0.46 + bobY;
+  for(const f of FALLS){
+    const top = project(f.top.x+0.5, f.top.y, f.top.z+0.5);
+    if(!f.diverted){
+      const bot = project(f.tile.x+0.5, f.tile.y+1, f.tile.z+0.5);
+      const grad = ctx.createLinearGradient(0, cy+top.sy, 0, cy+bot.sy);
+      grad.addColorStop(0,'rgba(160,220,245,.75)'); grad.addColorStop(1,'rgba(160,220,245,.25)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.roundRect(cx+top.sx-7, cy+top.sy, 14, bot.sy-top.sy, 6); ctx.fill();
+      // streaks
+      ctx.strokeStyle='rgba(255,255,255,.55)'; ctx.lineWidth=1.6;
+      for(let i=0;i<3;i++){
+        const ph = (t*1.8 + i/3)%1;
+        const yy = cy + lerp(top.sy, bot.sy, ph);
+        ctx.beginPath(); ctx.moveTo(cx+top.sx-4+i*4, yy); ctx.lineTo(cx+top.sx-4+i*4, yy+8); ctx.stroke();
+      }
+      // splash
+      if(Math.random()<0.3)
+        particles.push({sx:top.sx+rand(-8,8), sy:bot.sy-2, vx:rand(-30,30), vy:rand(-60,-20), life:.4, max:.4, color:'#BFE9F7', size:rand(1.5,2.6)});
+    } else {
+      // diverted: dribbles off the side of the fountain cube, missing the path
+      ctx.strokeStyle='rgba(160,220,245,.6)'; ctx.lineWidth=3;
+      const ph=(t*2)%1;
+      ctx.beginPath();
+      ctx.moveTo(cx+top.sx+10, cy+top.sy);
+      ctx.quadraticCurveTo(cx+top.sx+26, cy+top.sy+14, cx+top.sx+30, cy+top.sy+34+ph*6);
+      ctx.stroke();
+    }
   }
 }
 
@@ -584,7 +799,7 @@ function drawWalker(w, bobY){
   ctx.beginPath(); ctx.arc(0,-27+bob,5.4,0,TAU); ctx.fill();
   ctx.fillStyle='#3B2B27';
   ctx.beginPath(); ctx.arc(0,-29+bob,4.6,Math.PI*1.05,Math.PI*1.95); ctx.fill();
-  if(w.waiting){ // impatient "…" while stranded at a broken seam
+  if(w.waiting){
     ctx.fillStyle='rgba(255,246,232,.92)';
     ctx.beginPath(); ctx.roundRect(-10,-44+bob,20,11,5.5); ctx.fill();
     ctx.fillStyle='#5A3A4A';
@@ -621,15 +836,15 @@ function frame(now){
   }
   const bobY = Math.sin(t*0.8)*5;
   ctx.fillStyle='rgba(90,50,110,.18)';
-  ctx.beginPath(); ctx.ellipse(CW/2, CH*0.46 + 150 + bobY*0.3, 150, 30, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(CW/2, CH*0.46 + 160 + tiltT*60 + bobY*0.3, 150, 30, 0, 0, TAU); ctx.fill();
 
   const sorted=[...B].sort((a,b2)=>{
     const pa=project(a.x,a.y,a.z), pb=project(b2.x,b2.y,b2.z);
     return (pa.depth - pb.depth) || (a.y - b2.y);
   });
   for(const b of sorted) drawBlock(b, bobY);
+  drawFalls(bobY, t);
 
-  // parasols (world-anchored — they orbit with the island)
   for(const pp of parasols){
     const q = project(pp.t.x, pp.t.y+1, pp.t.z);
     const px = CW/2 + q.sx, py = CH*0.46 + q.sy + bobY;
@@ -664,13 +879,22 @@ loadWorld(parseInt(localStorage.getItem('btw_world')||'0') || 0);
 
 /* debug handle for tests */
 window.__tw = {
-  state: ()=>({ mode, wi, yaw, yawTarget, snap: snapIndex(yawTarget), saved: savedCount, melted: meltedCount,
+  state: ()=>({ mode, wi, snap: snapIndex(yawTarget), tilt: tiltTarget, saved: savedCount, melted: meltedCount,
                 parasols: parasols.length, waiting: walkers.filter(w=>w.waiting).length,
-                tiles: walkers.map(w=>keyOf(w.tile)) }),
-  pathAt: i=>{ const keep=G; G=graphAt(i); const p=routeFrom(DOOR); G=keep; return p && p.length; },
-  setYaw: i=>{ yaw = yawTarget = SNAPS[i]; if(mode==='spin') refreshGate(); else G = graphAt(i); },
+                tiles: walkers.map(w=>keyOf(w.tile)),
+                falls: FALLS.map(f=>f.diverted) }),
+  pathAt: (yv, tv)=>{ const keep=G; G=graphAt(yv, tv); const p=routeFrom(DOOR); G=keep; return p && p.length; },
+  setView: (yv, tv)=>{ yaw = yawTarget = SNAPS[yv]; tiltT = tiltTarget = tv;
+                       if(mode==='spin') refreshGate(); else G = graphAt(yv, tv); },
   load: i=>loadWorld(i),
   open: ()=>openDoors(),
+  crank: tag=>{ const c = CRANKS.find(k=>k.tag===tag); if(!c) return false;
+    const tiles = B.filter(b=>b.grp===tag);
+    const p = project(tiles[0].x+0.5, tiles[0].y+1, tiles[0].z+0.5);
+    return tapCrank(p.sx, p.sy); },
+  valve: i=>{ const f = FALLS[i]; if(!f) return false;
+    const p = project(f.valve.x+0.5, f.valve.y+1, f.valve.z+0.5);
+    return tapValve(p.sx, p.sy); },
   tileXY: (x,y,z)=>{ const q=project(x,y+1,z); return { x: CW/2+q.sx, y: CH*0.46+q.sy }; },
 };
 </script>

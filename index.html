@@ -328,15 +328,17 @@ const lbHeaders = () => {
   return h;
 };
 async function lbTop(){
-  const r = await fetch(`${LB.url}/rest/v1/${LB.table}?select=name,day,chilled&order=day.desc,chilled.desc,created_at.asc&limit=20`, { headers: lbHeaders() });
+  const r = await fetch(`${LB.url}/rest/v1/${LB.table}?select=name,day,chilled,melted&order=chilled.desc,day.asc,created_at.asc&limit=20`, { headers: lbHeaders() });
   if(!r.ok) throw new Error('leaderboard fetch ' + r.status);
   return r.json();
 }
-async function lbPost(name, day, chilled){
-  const r = await fetch(`${LB.url}/rest/v1/${LB.table}`, {
+async function lbPost(name, day, chilled, melted){
+  const post = body => fetch(`${LB.url}/rest/v1/${LB.table}`, {
     method:'POST', headers:{ ...lbHeaders(), Prefer:'return=minimal' },
-    body: JSON.stringify({ name, day, chilled }),
+    body: JSON.stringify(body),
   });
+  let r = await post({ name, day, chilled, melted });
+  if(!r.ok) r = await post({ name, day, chilled }); // older table without melted
   if(!r.ok) throw new Error('leaderboard post ' + r.status);
 }
 const escapeHtml = s => s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -506,7 +508,8 @@ let level=null, path=null;
 let walkers=[], placed=[], particles=[], puddles=[], usedNames=[], rotors=[], scorchZones=[];
 let toolStock={}, selectedTool=null, hoverPos=null, timeScale=1;
 let spawned=0, savedCount=0, meltedCount=0, spawnTimer=0, endTimer=-1, playT=0;
-let meltJokes=[], endlessChilled=0, lastRun=null;
+let meltJokes=[], endlessChilled=0, endlessMelted=0, lastRun=null;
+const PUDDLE_BUDGET = 8; // an Infinite Summer run ends when this many have puddled
 
 let unlocked = parseInt(localStorage.getItem('bth_unlocked')||'0');
 
@@ -529,6 +532,10 @@ el.tagline.textContent = pick(TAGLINES);
 el.muteBtn.textContent = muted ? '🔇' : '🔊';
 if(unlocked>0) el.resetBtn.classList.remove('hidden');
 
+function refreshMelted(){
+  el.melted.textContent = (level && level.endless)
+    ? `${endlessMelted + meltedCount}/${PUDDLE_BUDGET}` : meltedCount;
+}
 function toast(msg, good=false){
   const d = document.createElement('div');
   d.className = 'toast'+(good?' good':'');
@@ -624,17 +631,18 @@ function startLevel(idx, endlessN=0){
   toolStock = {...level.tools};
   selectedTool=null; hoverPos=null;
   spawned=0; savedCount=0; meltedCount=0; spawnTimer=0.8; endTimer=-1; playT=0;
-  if(endlessN===1) endlessChilled=0; // fresh endless run
+  if(endlessN===1){ endlessChilled=0; endlessMelted=0; } // fresh endless run
   el.hint.classList.remove('show');
   el.lbSubmit.classList.add('hidden');
 
   el.saved.textContent='0'; el.quota.textContent=level.quota;
-  el.melted.textContent='0'; el.tempv.textContent=level.temp;
+  refreshMelted(); el.tempv.textContent=level.temp;
   buildToolbar();
 
   el.introKicker.textContent = endlessN>0 ? 'Endless Mode' : `Level ${idx+1} of ${LEVELS.length}`;
   el.introName.textContent = level.name;
-  el.introBrief.innerHTML = level.brief;
+  el.introBrief.innerHTML = level.brief + (level.endless
+    ? `<br><b>🫠 ${PUDDLE_BUDGET - endlessMelted} puddles left</b> before the run ends. The board counts your splashes.` : '');
   el.introTools.textContent = 'Supplies: ' + Object.keys(toolStock).map(k=>`${TOOL_DEFS[k].ico}×${toolStock[k]}`).join('  ');
   el.title.classList.add('hidden');
   el.resultModal.classList.add('hidden');
@@ -693,24 +701,32 @@ function finishLevel(){
   el.resStars.textContent = win ? '⭐'.repeat(stars)+'☆'.repeat(3-stars) : '🫠';
   el.resSaved.textContent = savedCount; el.resMelted.textContent = meltedCount;
   el.resObit.textContent = meltJokes.length ? pick(meltJokes) : "Zero melts. Legal is thrilled.";
-  el.resBtn.textContent = win ? (level.endless || levelIndex < LEVELS.length-1 ? 'NEXT SHIFT' : 'ENDLESS MODE')
-                              : (level.endless ? 'NEW RUN' : 'TRY AGAIN');
+  let runOver = false;
   if(level.endless){
     endlessChilled += savedCount;
-    if(!win){ // run over — this is the score
-      lastRun = { day: endlessDay, chilled: endlessChilled };
+    endlessMelted += meltedCount;
+    runOver = endlessMelted >= PUDDLE_BUDGET;
+    el.resBtn.textContent = runOver ? 'NEW RUN' : 'NEXT SHIFT';
+    el.resKicker.textContent = runOver
+      ? `Run over — ${endlessMelted} puddles. 🧊${endlessChilled} splashed in ${endlessDay} day${endlessDay>1?'s':''}`
+      : `Infinite Summer · Day ${endlessDay} · 🫠 ${PUDDLE_BUDGET - endlessMelted} puddles left`;
+    if(runOver){ // this is the score: splashes, with the ratio for bragging
+      lastRun = { day: endlessDay, chilled: endlessChilled, melted: endlessMelted };
       const best = JSON.parse(localStorage.getItem('bth_best')||'null');
-      if(!best || lastRun.day > best.day || (lastRun.day === best.day && lastRun.chilled > best.chilled))
+      if(!best || lastRun.chilled > best.chilled)
         localStorage.setItem('bth_best', JSON.stringify(lastRun));
-      el.resKicker.textContent = `Run over — Day ${lastRun.day} · ${lastRun.chilled} chilled total`;
       if(LB.key){
         el.lbSubmit.classList.remove('hidden');
         el.lbName.value = localStorage.getItem('bth_name')||'';
-        el.lbMsg.textContent = 'Post your run to the Hall of Legends?';
+        const ratio = Math.round(100*lastRun.chilled/Math.max(1,lastRun.chilled+lastRun.melted));
+        el.lbMsg.textContent = `${ratio}% splash rate — post it to the Hall of Legends?`;
         el.lbSendBtn.disabled = false;
       }
     }
+  } else {
+    el.resBtn.textContent = win ? (levelIndex < LEVELS.length-1 ? 'NEXT SHIFT' : 'ENDLESS MODE') : 'TRY AGAIN';
   }
+  level.__runOver = runOver;
   el.resultModal.classList.remove('hidden');
   if(win){
     sfx.win();
@@ -737,9 +753,9 @@ el.muteBtn.addEventListener('click', ()=>{
   el.muteBtn.textContent = muted?'🔇':'🔊';
 });
 el.resBtn.addEventListener('click', ()=>{
+  if(level.endless){ startLevel(levelIndex, level.__runOver ? 1 : endlessDay+1); return; }
   const win = savedCount >= level.quota;
-  if(!win){ startLevel(levelIndex, level.endless ? 1 : 0); return; } // endless loss = new run from day 1
-  if(level.endless){ startLevel(levelIndex, endlessDay+1); return; }
+  if(!win){ startLevel(levelIndex, 0); return; }
   if(levelIndex < LEVELS.length-1) startLevel(levelIndex+1);
   else startLevel(levelIndex, 1);
 });
@@ -751,7 +767,7 @@ el.lbSendBtn.addEventListener('click', async ()=>{
   localStorage.setItem('bth_name', name);
   el.lbSendBtn.disabled = true; el.lbMsg.textContent = 'filing the paperwork…';
   try{
-    await lbPost(name, lastRun.day, lastRun.chilled);
+    await lbPost(name, lastRun.day, lastRun.chilled, lastRun.melted);
     el.lbSubmit.classList.add('hidden');
     openLeaderboard(name);
   }catch(err){
@@ -762,7 +778,7 @@ el.lbSendBtn.addEventListener('click', async ()=>{
 async function openLeaderboard(hl){
   el.lbModal.classList.remove('hidden');
   const best = JSON.parse(localStorage.getItem('bth_best')||'null');
-  const bestLine = best ? `Your best: Day ${best.day} · 🧊${best.chilled}` : '';
+  const bestLine = best ? `Your best: 🧊${best.chilled} splashed${best.melted!=null?` · ${Math.round(100*best.chilled/Math.max(1,best.chilled+best.melted))}% splash rate`:''} (Day ${best.day})` : '';
   if(!LB.key){
     el.lbList.innerHTML = `<div class="brief">${bestLine || 'No endless runs yet — beat the campaign to unlock Infinite Summer.'}<br><br><i>Global board coming online soon.</i></div>`;
     return;
@@ -771,7 +787,11 @@ async function openLeaderboard(hl){
   try{
     const rows = await lbTop();
     el.lbList.innerHTML = (rows.length
-      ? rows.map((r,i)=>`<div class="lbrow${hl && r.name===hl ? ' me':''}"><span class="rank">${i+1}</span><span class="nm">${escapeHtml(r.name)}</span><span class="sc">Day ${r.day} · 🧊${r.chilled}</span></div>`).join('')
+      ? rows.map((r,i)=>{
+          const m = r.melted ?? null;
+          const ratio = m===null ? '' : ` · ${Math.round(100*r.chilled/Math.max(1,r.chilled+m))}%`;
+          return `<div class="lbrow${hl && r.name===hl ? ' me':''}"><span class="rank">${i+1}</span><span class="nm">${escapeHtml(r.name)}</span><span class="sc">🧊${r.chilled}${m===null?'':' 🫠'+m}${ratio}</span></div>`;
+        }).join('')
       : '<div class="brief">Nobody has survived Infinite Summer yet. Be the first.</div>')
       + (bestLine ? `<div class="brief" style="margin-top:10px">${bestLine}</div>` : '');
   }catch(err){
@@ -961,7 +981,7 @@ function update(dt){
       if(w.t>=1){
         const pos = path.at(w.d);
         puddles.push({x:pos.x, y:pos.y-(pos.z||0), color:w.shirt, tieHue:w.tieHue, hasBag:w.hasBag, r:rand(15,19), wob:rand(0,TAU)});
-        meltedCount++; el.melted.textContent = meltedCount;
+        meltedCount++; refreshMelted();
         walkers.splice(i,1);
       }
     }
